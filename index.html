@@ -146,9 +146,14 @@
     background:var(--surface);color:var(--text);border-radius:24px 24px 0 0;box-shadow:var(--shadow);z-index:20;
     padding:14px 22px calc(env(safe-area-inset-bottom,0px) + 28px);max-width:560px;margin:0 auto;
     transform:translateY(105%);transition:transform .38s cubic-bezier(.2,.8,.2,1);
+    overscroll-behavior:contain;   /* a drag at the top stays with the sheet instead of scrolling the page behind it */
   }
   .sheet.open{transform:translateY(0)}
-  .sheet-handle{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 16px}
+  .sheet.dragging{transition:none}  /* while a finger is on it the sheet tracks the finger exactly */
+  /* the bar is small, so pad out an invisible grab area around it */
+  .sheet-handle{width:40px;height:4px;border-radius:2px;background:var(--line);margin:-10px auto 6px;
+    box-sizing:content-box;padding:10px 30px;background-clip:content-box;touch-action:none;cursor:grab}
+  .sheet.dragging .sheet-handle{cursor:grabbing}
   .sheet h2{font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:500;font-size:30px;line-height:1.1}
   .sheet .lead{font-size:14px;color:var(--muted);margin:6px 0 14px}
   .field{padding:16px 0;border-top:1px solid var(--line)}
@@ -1018,11 +1023,20 @@
   });
 
   /* ---------- settings sheet ---------- */
-  function openSheet(){ syncSettingsUI(); $('sheet').classList.add('open'); $('backdrop').classList.add('show'); }
+  // clear anything a drag left behind, so the sheet always opens and closes from a known state
+  function restSheet(sheet, backdrop){
+    sheet.classList.remove('dragging'); sheet.style.transform = ''; backdrop.style.opacity = '';
+  }
+  function openSheet(){
+    syncSettingsUI(); restSheet($('sheet'), $('backdrop'));
+    $('sheet').scrollTop = 0; $('sheet').classList.add('open'); $('backdrop').classList.add('show');
+  }
   function openCal(){
-    calSel = null; calMonth = null; renderCalendar(); renderSync(); syncNow(false); $('calSheet').classList.add('open'); $('calBackdrop').classList.add('show'); }
-  function closeCal(){ $('calSheet').classList.remove('open'); $('calBackdrop').classList.remove('show'); }
-  function closeSheet(){ $('sheet').classList.remove('open'); $('backdrop').classList.remove('show'); }
+    calSel = null; calMonth = null; renderCalendar(); renderSync(); syncNow(false);
+    restSheet($('calSheet'), $('calBackdrop'));
+    $('calSheet').scrollTop = 0; $('calSheet').classList.add('open'); $('calBackdrop').classList.add('show'); }
+  function closeCal(){ restSheet($('calSheet'), $('calBackdrop')); $('calSheet').classList.remove('open'); $('calBackdrop').classList.remove('show'); }
+  function closeSheet(){ restSheet($('sheet'), $('backdrop')); $('sheet').classList.remove('open'); $('backdrop').classList.remove('show'); }
   function onSettingsChanged(){ saveSettings(); updatePlan(); drawMarks(); if(session.status === 'idle') renderIdle(); }
   function buildLineList(){
     var box = $('lineList'); box.innerHTML = '';
@@ -1066,18 +1080,28 @@
     var btns = $(id).querySelectorAll('button');
     for(var i = 0; i < btns.length; i++) btns[i].classList.toggle('on', String(btns[i].getAttribute('data-val')) === String(settings[key]));
   }
-  function segInit(id, key){
+  function segInit(id, key, after){
     var btns = $(id).querySelectorAll('button');
     Array.prototype.forEach.call(btns, function(b){
-      b.addEventListener('click', function(){ settings[key] = segVal(b.getAttribute('data-val')); segSync(id, key); onSettingsChanged(); });
+      b.addEventListener('click', function(){
+        settings[key] = segVal(b.getAttribute('data-val'));
+        segSync(id, key); onSettingsChanged();
+        if(after) after();
+      });
     });
+  }
+  function syncVoiceCount(){
+    var n = settings.voiceCount | 0;
+    $('voiceCountVal').textContent = n;
+    $('voiceMinus').disabled = n <= 0;
+    $('voicePlus').disabled = n >= 12;
   }
   function syncSettingsUI(){
     $('durRange').value = settings.duration; $('durVal').textContent = settings.duration + ' min'; syncPresets();
     segSync('bellSeg', 'bellEvery'); segSync('settleSeg', 'settle');
     $('syncUrl').value = sync.url || ''; $('syncKey').value = sync.key || '';
     renderSync();
-    $('voiceCountVal').textContent = settings.voiceCount;
+    syncVoiceCount();
     segSync('voiceSeg', 'voice');
     syncLineList();
     $('mixSwitch').classList.toggle('on', !!settings.mix); $('mixSwitch').setAttribute('aria-checked', settings.mix ? 'true' : 'false');
@@ -1087,6 +1111,64 @@
   $('calBtn').addEventListener('click', openCal);
   $('calBackdrop').addEventListener('click', closeCal);
   $('calDone').addEventListener('click', closeCal);
+
+  $('doneBtn').addEventListener('click', closeSheet);
+  $('backdrop').addEventListener('click', closeSheet);
+
+  /* Length */
+  $('durRange').addEventListener('input', function(){
+    settings.duration = Number(this.value);
+    $('durVal').textContent = settings.duration + ' min';
+    syncPresets(); onSettingsChanged();
+  });
+
+  /* Bell every / Settle in / Voice. Changing voice previews the new one. */
+  segInit('bellSeg', 'bellEvery');
+  segInit('settleSeg', 'settle');
+  segInit('voiceSeg', 'voice', function(){
+    ensureAudio();
+    decodeClips(function(){ playLine(chosenLines()[0], 0); audio.scheduled = []; });
+  });
+
+  /* Voice reminders */
+  function stepVoice(by){
+    settings.voiceCount = Math.max(0, Math.min(12, (settings.voiceCount | 0) + by));
+    syncVoiceCount(); onSettingsChanged();
+  }
+  $('voiceMinus').addEventListener('click', function(){ stepVoice(-1); });
+  $('voicePlus').addEventListener('click', function(){ stepVoice(1); });
+
+  /* Let other apps keep playing */
+  function toggleMix(){
+    settings.mix = !settings.mix;
+    $('mixSwitch').classList.toggle('on', settings.mix);
+    $('mixSwitch').setAttribute('aria-checked', settings.mix ? 'true' : 'false');
+    setAudioSession(); saveSettings();
+  }
+  $('mixSwitch').addEventListener('click', toggleMix);
+  $('mixSwitch').addEventListener('keydown', function(e){
+    if(e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter'){ e.preventDefault(); toggleMix(); }
+  });
+
+  /* Hear each sound */
+  $('testBell').addEventListener('click', function(){
+    ensureAudio(); ringBell(0); audio.scheduled = [];
+  });
+  $('testVoice').addEventListener('click', function(){
+    ensureAudio();
+    decodeClips(function(){ playLine(chosenLines()[0], 0); audio.scheduled = []; });
+  });
+
+  /* Calendar month navigation */
+  function stepMonth(by){
+    if(!calMonth) return;
+    var n = new Date();
+    if(by > 0 && calMonth.getFullYear() === n.getFullYear() && calMonth.getMonth() >= n.getMonth()) return;
+    calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + by, 1);
+    calSel = null; renderCalendar();
+  }
+  $('calPrev').addEventListener('click', function(){ stepMonth(-1); });
+  $('calNext').addEventListener('click', function(){ stepMonth(1); });
 
   $('syncConnect').addEventListener('click', connectSync);
   $('syncOff').addEventListener('click', disconnectSync);
@@ -1101,6 +1183,75 @@
   $('resetBtn').addEventListener('click', function(){
     settings = Object.assign({}, DEFAULTS, { lines: DEFAULTS.lines.slice() });
     saveSettings(); syncSettingsUI(); onSettingsChanged();
+  });
+
+  /* ---------- drag a sheet down to dismiss ----------
+     The sheet still scrolls normally. A downward drag only becomes a dismissal when the
+     content is already at the top, or when the drag began on the handle. Once we claim the
+     gesture we preventDefault, which is what stops iOS scrolling the page behind the sheet. */
+  function makeDismissible(sheet, backdrop, close){
+    var startY = 0, startX = 0, dy = 0, t0 = 0;
+    var active = false, dragging = false, decided = false, fromHandle = false;
+
+    function py(e){ return e.touches && e.touches.length ? e.touches[0].clientY : e.clientY; }
+    function px(e){ return e.touches && e.touches.length ? e.touches[0].clientX : e.clientX; }
+
+    function begin(e){
+      if(!sheet.classList.contains('open')) return;
+      var t = e.target;
+      // a slider, or a field being typed into, needs the gesture more than we do
+      if(t && t.closest && t.closest('input,textarea,select')) return;
+      startY = py(e); startX = px(e); dy = 0; t0 = Date.now();
+      active = true; dragging = false; decided = false;
+      fromHandle = !!(t && t.classList && t.classList.contains('sheet-handle'));
+    }
+    function move(e){
+      if(!active || (decided && !dragging)) return;
+      var d = py(e) - startY, ax = Math.abs(px(e) - startX);
+      if(!decided){
+        if(Math.abs(d) < 6 && ax < 6) return;                 // too small to read yet
+        decided = true;
+        dragging = d > 0 && d > ax && (fromHandle || sheet.scrollTop <= 0);
+        if(!dragging) return;                                 // it was a scroll or a sideways move
+        sheet.classList.add('dragging');
+      }
+      dy = Math.max(0, d);
+      if(e.cancelable) e.preventDefault();
+      sheet.style.transform = 'translateY(' + dy + 'px)';
+      backdrop.style.opacity = String(Math.max(0, 1 - dy / (sheet.offsetHeight || 400)));
+    }
+    function end(){
+      if(!active) return;
+      var wasDragging = dragging, travelled = dy;
+      var h = sheet.offsetHeight || 400, speed = travelled / Math.max(1, Date.now() - t0);
+      active = false; dragging = false; decided = false; startY = 0; dy = 0;
+      if(!wasDragging) return;
+      sheet.classList.remove('dragging');
+      // far enough, or a quick flick: let it go. Otherwise it springs back.
+      if(travelled > h * 0.28 || (speed > 0.5 && travelled > 40)){ close(); return; }
+      sheet.style.transform = ''; backdrop.style.opacity = '';
+    }
+
+    sheet.addEventListener('touchstart', begin, { passive:true });
+    sheet.addEventListener('touchmove', move, { passive:false });
+    sheet.addEventListener('touchend', end);
+    sheet.addEventListener('touchcancel', end);
+    // and with a mouse, on the Mac
+    sheet.addEventListener('mousedown', function(e){
+      if(e.button !== 0) return;
+      begin(e);
+      var mm = function(ev){ move(ev); };
+      var mu = function(){ end(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+      document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+    });
+  }
+  makeDismissible($('sheet'), $('backdrop'), closeSheet);
+  makeDismissible($('calSheet'), $('calBackdrop'), closeCal);
+
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape' && e.key !== 'Esc') return;
+    if($('sheet').classList.contains('open')) closeSheet();
+    else if($('calSheet').classList.contains('open')) closeCal();
   });
 
   /* ---------- init ---------- */

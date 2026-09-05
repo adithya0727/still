@@ -420,12 +420,49 @@
   function saveLog(a){ try{ localStorage.setItem(LOGKEY, JSON.stringify(a.slice(-2000))); }catch(e){} }
   function pad2(n){ return (n < 10 ? '0' : '') + n; }
   function dayKey(ms){ var d = new Date(ms); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
-  function recordSit(seconds, planned, complete){
+  function recordSit(seconds, planned, complete, when){
     if(seconds < 60) return; // a sit under a minute is a false start, not a sit
     var log = loadLog();
-    log.push({ at: Date.now(), s: Math.round(seconds), p: Math.round(planned), c: !!complete });
+    // `when` is the moment the sit ended. It matters for a sit recovered on the next open:
+    // one that finished last night belongs to last night, not to the morning you reopened.
+    log.push({ at: when || Date.now(), s: Math.round(seconds), p: Math.round(planned), c: !!complete });
     saveLog(log);
     syncDirty = true; syncNow(true);
+  }
+
+  /* ---------- an interrupted sit ----------
+     The running sit lives in memory, and iOS is free to evict this app the moment the screen
+     locks — which is exactly what the hint invites you to do. startedAt, pausedTotal and the
+     planned length are enough to reconstruct the sit later, so they are written at each state
+     change and settled on the next open. Without this a pocketed sit is lost and never counts. */
+  var SESSKEY = 'still.session.v1';
+  function saveSession(){
+    if(session.status !== 'running' && session.status !== 'paused'){ clearSession(); return; }
+    try{
+      localStorage.setItem(SESSKEY, JSON.stringify({
+        startedAt: session.startedAt,
+        pausedTotal: session.pausedTotal,
+        pausedAt: session.status === 'paused' ? session.pausedAt : 0,
+        duration: settings.duration
+      }));
+    }catch(e){}
+  }
+  function clearSession(){ try{ localStorage.removeItem(SESSKEY); }catch(e){} }
+  function resumeSession(){
+    var o = null;
+    try{ o = JSON.parse(localStorage.getItem(SESSKEY) || 'null'); }catch(e){}
+    clearSession();
+    if(!o || !o.startedAt || !o.duration) return;
+    var now = Date.now();
+    if(now - o.startedAt > 30 * 86400000) return;        // stale beyond any use
+    // a sit paused when the app died stops accruing at the moment it was paused
+    var paused = (o.pausedTotal || 0) + (o.pausedAt ? now - o.pausedAt : 0);
+    var D = o.duration * 60;
+    var el = (now - o.startedAt - paused) / 1000;
+    if(!(el > 0)) return;                                 // clock moved backwards
+    var done = Math.min(el, D);
+    var endedAt = o.startedAt + paused + done * 1000;
+    recordSit(done, D, el >= D, endedAt);
   }
   function logStats(){
     var log = loadLog(), days = {};
@@ -445,7 +482,7 @@
     var st = logStats(), el = $('log');
     if(!st.sits){ el.textContent = ''; return; }
     var parts = [];
-    if(st.streak >= 2) parts.push('<b>' + st.streak + ' days</b> running.');
+    if(st.streak >= 1) parts.push('<b>' + st.streak + (st.streak === 1 ? ' day' : ' days') + '</b> running.');
     parts.push(st.sits + (st.sits === 1 ? ' sit, ' : ' sits, ') + fmtTotal(st.total) + '.');
     el.innerHTML = parts.join(' ');
   }
@@ -561,7 +598,7 @@
     if(!calMonth){ var n = new Date(); calMonth = new Date(n.getFullYear(), n.getMonth(), 1); }
     var map = byDay(), stats = logStats();
     $('streakNum').textContent = stats.streak;
-    $('streakLab').textContent = stats.streak === 1 ? 'day streak' : 'day streak';
+    $('streakLab').textContent = stats.streak === 1 ? 'day streak' : 'days streak';
     $('calTitle').textContent = MONS[calMonth.getMonth()] + ' ' + calMonth.getFullYear();
 
     var dow = $('calDow');
@@ -940,6 +977,7 @@
   }
   function beginRunning(){
     session.status = 'running'; session.startedAt = Date.now(); session.pausedTotal = 0;
+    saveSession();
     decodeClips(function(){ if(session.status === 'running') scheduleBells(elapsedNow()); });
     setStatusUI(); render(0); tick();
   }
@@ -947,10 +985,12 @@
     if(session.status === 'running'){
       session.status = 'paused'; session.pausedAt = Date.now();
       cancelScheduled(); // silence the queued bells while paused
+      saveSession();
       try{ if('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; }catch(e){}
       setStatusUI(); setState('Paused');
     } else if(session.status === 'paused'){
       session.pausedTotal += Date.now() - session.pausedAt; session.status = 'running';
+      saveSession();
       ensureAudio(); decodeClips(function(){ if(session.status === 'running') scheduleBells(elapsedNow()); });
       try{ if('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; }catch(e){}
       setStatusUI(); tick();
@@ -958,6 +998,7 @@
   }
   function endSession(stateText, shownSeconds){
     session.status = 'done';
+    clearSession();
     stopSilence();
     try{ if('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none'; }catch(e){}
     if(session.timer){ clearInterval(session.timer); session.timer = null; }
@@ -969,13 +1010,13 @@
   function complete(){ recordSit(settings.duration * 60, settings.duration * 60, true); endSession('Complete. Well done.', settings.duration * 60); }
   function finishEarly(){ var el = elapsedNow(); cancelScheduled(); ringBell(0); recordSit(el, settings.duration * 60, false); endSession('Ended after ' + fmtClock(el), el); }
   function cancelSession(){
-    session.status = 'idle';
+    session.status = 'idle'; clearSession();
     if(session.timer){ clearInterval(session.timer); session.timer = null; }
     cancelScheduled(); stopKeepAlive(); stopSilence(); releaseWakeLock();
     body.classList.remove('sitting', 'reveal');
     renderIdle(); setStatusUI();
   }
-  function resetToIdle(){ session.status = 'idle'; cancelScheduled(); stopKeepAlive(); stopSilence(); releaseWakeLock(); renderIdle(); setStatusUI(); }
+  function resetToIdle(){ session.status = 'idle'; clearSession(); cancelScheduled(); stopKeepAlive(); stopSilence(); releaseWakeLock(); renderIdle(); setStatusUI(); }
 
   function setStatusUI(){
     var st = session.status;
@@ -1256,7 +1297,9 @@
 
   /* ---------- init ---------- */
   $('progress').setAttribute('stroke-dasharray', CIRC);
-  buildLineList(); syncSettingsUI(); renderIdle(); setStatusUI();
+  buildLineList(); syncSettingsUI();
+  resumeSession();          // settle a sit that was cut short by the app being closed
+  renderIdle(); setStatusUI();
   try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function(){}); }catch(e){}
   renderSync(); syncNow(true);
   // On its own address this page is a full offline app; inside a viewer this quietly does nothing.

@@ -1,6 +1,6 @@
 /* Still: offline cache.
    Bump the version below whenever you upload a new index.html, so phones fetch the new one. */
-var CACHE = 'still-v2';
+var CACHE = 'still-v3';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-512-maskable.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', function(e){

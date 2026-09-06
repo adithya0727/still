@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06h';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06i';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -586,6 +586,7 @@
      the browser sends straight out instead of asking permission first with OPTIONS.
      Preflights are quietly dropped by some content blockers, VPNs and company networks,
      and when that happens nothing works and the browser will not say why. */
+  var lastAttempt = null;
   function apiCall(action, opts, attempt){
     opts = opts || {};
     var payload = { action: action };
@@ -595,12 +596,14 @@
     // Always the same neutral address. A path like /auth/login is matched by content
     // blockers and network filters, which drop it before it is sent; the browser then
     // reports a plain network failure with nothing to distinguish it from being offline.
-    return fetch(API + '/', {
+    // kept so the diagnostics can replay byte for byte what actually failed
+    lastAttempt = {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload)
-    }).then(function(r){
+    };
+    return fetch(API + '/', lastAttempt).then(function(r){
       return r.text().then(function(text){
         var data = {};
         try{ data = JSON.parse(text); }catch(e){}
@@ -1525,6 +1528,8 @@
       ['short',   '/',           { method:'POST', headers:CT, body:'{"action":"login","u":"probe","p":"probe1234"}' }]
     ];
 
+    if(lastAttempt) probes.push(['replay', '/', lastAttempt]);
+
     var results = [], i = 0;   // kept apart from the notes, which mention failure in words
     function next(){
       if(i >= probes.length){
@@ -1564,6 +1569,10 @@
 
     // Two handlers rather than .then().catch(): a fault while starting the app is not a
     // sign-in failure, and must not be reported as one.
+    // Out of the submit handler entirely. A password manager or privacy extension hooking
+    // form submission can interfere with a request started inside it, and nothing about
+    // this call needs the event's context.
+    setTimeout(function(){
     apiCall(claiming ? 'claim' : 'login', { body: payload }).then(
       function(data){
         $('gateGo').disabled = false;
@@ -1587,6 +1596,7 @@
         if(!(err && err.status)) diagnose(err);
       }
     );
+    }, 0);
   });
 
   function signOut(expired){

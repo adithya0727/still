@@ -138,6 +138,31 @@
   body.sitting.reveal .readout{opacity:1}
   body.sitting.reveal .hint{opacity:1}
 
+  /* ---- signing in ---- */
+  .gate{
+    position:fixed; inset:0; z-index:40; background:var(--bg); color:var(--text);
+    display:grid; place-items:center; padding:28px 22px calc(env(safe-area-inset-bottom,0px) + 28px);
+    overflow:auto; -webkit-overflow-scrolling:touch;
+  }
+  .gate[hidden]{display:none}
+  .gate-inner{width:100%; max-width:330px; display:flex; flex-direction:column; align-items:center; gap:0}
+  .gate .brand{align-items:center; text-align:center}
+  .gate-lead{font-size:14px; color:var(--muted); margin:14px 0 26px; text-align:center; line-height:1.5}
+  .gate form{display:flex; flex-direction:column; gap:10px; width:100%}
+  .gate input{
+    width:100%; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:12px;
+    padding:14px 16px; font:300 16px/1.4 'Jost',system-ui,sans-serif; -webkit-appearance:none; appearance:none;
+  }
+  .gate input:focus{outline:none; border-color:var(--accent)}
+  .gate input[hidden]{display:none}
+  .gate .btn.primary{width:100%; margin-top:4px}
+  .gate-msg{
+    font-size:13.5px; line-height:1.5; color:var(--accent-text); text-align:center;
+    margin:14px 0 0; min-height:1.2em; max-width:300px;
+  }
+  .gate .link{margin-top:18px}
+  body.gated .app, body.gated .sheet, body.gated .backdrop{display:none}
+
   /* ---- settings sheet ---- */
   .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .3s ease;z-index:15}
   .backdrop.show{opacity:1;pointer-events:auto}
@@ -257,6 +282,23 @@
          style="position:fixed;width:2px;height:2px;bottom:0;right:0;opacity:.01;pointer-events:none"></video>
 </main>
 
+<section class="gate" id="gate" hidden>
+  <div class="gate-inner">
+    <div class="brand"><span class="brand-name">Still</span><span class="brand-sub">a quiet sit</span></div>
+    <p class="gate-lead" id="gateLead">Sign in to keep your practice.</p>
+    <form id="gateForm" autocomplete="on">
+      <input type="text" id="gateUser" name="username" autocomplete="username"
+             autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Your name" />
+      <input type="text" id="gateCode" name="one-time-code" autocomplete="one-time-code"
+             autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="Setup code" hidden />
+      <input type="password" id="gatePass" name="password" autocomplete="current-password" placeholder="Password" />
+      <button class="btn primary" id="gateGo" type="submit">Sign in</button>
+    </form>
+    <p class="gate-msg" id="gateMsg"></p>
+    <button type="button" class="link" id="gateToggle">First time here? Set up your account</button>
+  </div>
+</section>
+
 <div class="backdrop" id="backdrop"></div>
 <div class="backdrop" id="calBackdrop"></div>
 <section class="sheet" id="calSheet" role="dialog" aria-label="Practice calendar" aria-modal="true">
@@ -278,7 +320,6 @@
   <div class="cal-grid" id="calGrid"></div>
   <p class="cal-detail" id="calDetail"></p>
   <p class="cal-month" id="calMonth"></p>
-  <p class="sub" id="syncNote"></p>
 
   <div class="sheet-actions">
     <button type="button" class="link" id="clearLog">Clear history</button>
@@ -358,14 +399,21 @@
   </div>
 
   <div class="field">
-    <div class="field-head"><span class="label">Backup</span><span class="val" id="syncState"></span></div>
-    <input type="url" id="syncUrl" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://still-sync.…workers.dev" />
-    <input type="password" id="syncKey" autocomplete="off" placeholder="Access key" />
-    <div class="test-row" style="margin-top:10px">
-      <button type="button" class="btn" id="syncConnect">Connect</button>
-      <button type="button" class="btn" id="syncOff">Disconnect</button>
+    <div class="field-head"><span class="label">Account</span><span class="val" id="syncState"></span></div>
+    <p class="sub" id="whoami"></p>
+    <p class="sub" id="syncNote"></p>
+    <div class="test-row" style="margin-top:12px">
+      <button type="button" class="btn" id="pwToggle">Change password</button>
+      <button type="button" class="btn" id="signOutBtn">Sign out</button>
     </div>
-    <p class="sub" id="syncHelp">Once connected, every finished sit is saved to your own Cloudflare Worker within a second, with nothing for you to do. Setup is in the README.</p>
+    <div id="pwForm" hidden>
+      <input type="password" id="pwCurrent" autocomplete="current-password" placeholder="Current password" />
+      <input type="password" id="pwNext" autocomplete="new-password" placeholder="New password" />
+      <div class="test-row" style="margin-top:10px">
+        <button type="button" class="btn" id="pwSave">Save password</button>
+      </div>
+      <p class="sub" id="pwHelp">Your other devices will need signing in again.</p>
+    </div>
   </div>
 
   <div class="field">
@@ -387,7 +435,44 @@
   var $ = function(id){ return document.getElementById(id); };
   var body = document.body;
   var CIRC = 2 * Math.PI * 140;
-  var KEY = 'still.settings.v1';
+  /* ---------- who is signed in ----------
+     The account layer sits beside the app, never in front of it. Sitting must never
+     depend on a network, a server, or a live session, so the phone keeps its own copy
+     of everything and the server is only where it is kept safe and shared. */
+  var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
+  var AUTHKEY = 'still.auth.v1';
+
+  var auth = loadAuth();
+  function loadAuth(){
+    try{
+      var o = JSON.parse(localStorage.getItem(AUTHKEY) || 'null');
+      return (o && o.token && o.user && o.user.id) ? o : null;
+    }catch(e){ return null; }
+  }
+  function saveAuth(){
+    try{
+      if(auth) localStorage.setItem(AUTHKEY, JSON.stringify(auth));
+      else localStorage.removeItem(AUTHKEY);
+    }catch(e){}
+  }
+
+  /* Each person's record is kept under their own keys, so two people sharing an iPad
+     never see one another's history. */
+  var KEY, LOGKEY, SESSKEY, STAMPKEY, CURSORKEY;
+  function scopeKeys(uid){
+    var p = uid ? 'still.u.' + uid + '.' : 'still.';
+    KEY = p + 'settings.v1'; LOGKEY = p + 'log.v1';
+    SESSKEY = p + 'session.v1'; STAMPKEY = p + 'settings.at';
+    CURSORKEY = p + 'pulled.at';
+  }
+  scopeKeys(auth && auth.user.id);
+
+  function newId(){
+    try{ if(crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){}
+    var s = '';
+    for(var i = 0; i < 32; i++) s += '0123456789abcdef'[Math.floor(Math.random() * 16)];
+    return s;
+  }
   var DEFAULTS = {
     duration: 30, bellEvery: 10, voiceCount: 3, voice: 'eng', settle: 5, mix: false,
     lines: ['breath', 'return', 'inout', 'letgo']
@@ -415,7 +500,6 @@
     return s;
   }
   /* ---------- sit log ---------- */
-  var LOGKEY = 'still.log.v1';
   function loadLog(){ try{ var r = localStorage.getItem(LOGKEY); var a = r ? JSON.parse(r) : []; return Array.isArray(a) ? a : []; }catch(e){ return []; } }
   function saveLog(a){ try{ localStorage.setItem(LOGKEY, JSON.stringify(a.slice(-2000))); }catch(e){} }
   function pad2(n){ return (n < 10 ? '0' : '') + n; }
@@ -425,9 +509,10 @@
     var log = loadLog();
     // `when` is the moment the sit ended. It matters for a sit recovered on the next open:
     // one that finished last night belongs to last night, not to the morning you reopened.
-    log.push({ at: when || Date.now(), s: Math.round(seconds), p: Math.round(planned), c: !!complete });
+    log.push({ id: newId(), at: when || Date.now(), s: Math.round(seconds),
+               p: Math.round(planned), c: !!complete, sent: false });
     saveLog(log);
-    syncDirty = true; syncNow(true);
+    syncNow(true);
   }
 
   /* ---------- an interrupted sit ----------
@@ -435,7 +520,6 @@
      locks — which is exactly what the hint invites you to do. startedAt, pausedTotal and the
      planned length are enough to reconstruct the sit later, so they are written at each state
      change and settled on the next open. Without this a pocketed sit is lost and never counts. */
-  var SESSKEY = 'still.session.v1';
   function saveSession(){
     if(session.status !== 'running' && session.status !== 'paused'){ clearSession(); return; }
     try{
@@ -491,15 +575,41 @@
      Worker. Every finished sit is posted straight away; if that fails (offline,
      asleep), the attempt is repeated the next time the app is opened. The Worker
      merges rather than overwrites, so a late arrival can never erase anything. */
-  var SYNCKEY = 'still.sync.v1', STAMPKEY = 'still.settings.at';
-  var sync = loadSync(), syncing = false, syncDirty = false, lastSyncTry = 0;
-
-  function loadSync(){
-    try{ var o = JSON.parse(localStorage.getItem(SYNCKEY) || '{}'); return { url:o.url || '', key:o.key || '', last:o.last || 0, err:o.err || '' }; }
-    catch(e){ return { url:'', key:'', last:0, err:'' }; }
+  /* ---------- talking to the Worker ----------
+     A failed call is not a reason to sign anyone out. Only the server saying the session
+     is no longer good does that, and a network that is simply absent changes nothing. */
+  function apiCall(path, opts){
+    opts = opts || {};
+    var headers = { 'Content-Type': 'application/json' };
+    if(auth && auth.token) headers.Authorization = 'Bearer ' + auth.token;
+    return fetch(API + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function(r){
+      return r.text().then(function(text){
+        var data = {};
+        try{ data = JSON.parse(text); }catch(e){}
+        if(!r.ok){
+          var err = new Error(data.error || ('Something went wrong (' + r.status + ').'));
+          err.status = r.status;
+          throw err;
+        }
+        return data;
+      });
+    });
   }
-  function saveSync(){ try{ localStorage.setItem(SYNCKEY, JSON.stringify(sync)); }catch(e){} }
-  function syncOn(){ return !!(sync.url && sync.key); }
+  // the session is gone for good: drop it, but never on a mere network failure
+  function sessionLost(e){ return !!(e && e.status === 401); }
+
+  /* ---------- keeping the record in step ----------
+     A sit is written on the phone first and pushed afterwards. Anything the server has
+     not yet acknowledged is retried at the next opportunity, so a sit taken on a plane
+     is never lost, it just arrives later. */
+  var syncing = false, syncErr = '', syncLast = 0;
+
+  function cursor(){ try{ return Number(localStorage.getItem(CURSORKEY)) || 0; }catch(e){ return 0; } }
+  function setCursor(v){ try{ localStorage.setItem(CURSORKEY, String(v)); }catch(e){} }
   function settingsStamp(){ try{ return Number(localStorage.getItem(STAMPKEY)) || 0; }catch(e){ return 0; } }
   function setStamp(v){ try{ localStorage.setItem(STAMPKEY, String(v)); }catch(e){} }
 
@@ -510,12 +620,18 @@
     var hr = Math.round(m / 60); if(hr < 24) return hr === 1 ? 'an hour ago' : hr + ' hours ago';
     var d = Math.round(hr / 24); return d === 1 ? 'yesterday' : d + ' days ago';
   }
+  function pendingCount(){
+    return loadLog().filter(function(e){ return !e.sent; }).length;
+  }
   function syncStatus(){
-    if(!syncOn()) return { short:'off', long:'Not connected. Your record is only on this phone.' };
-    if(syncing) return { short:'saving', long:'Saving…' };
-    if(sync.err) return { short:'retrying', long:'Last save did not go through. It will try again on its own.' };
-    if(!sync.last) return { short:'connected', long:'Connected. Your next sit will be saved.' };
-    return { short:'on', long:'Backed up ' + ago(sync.last) + '.' };
+    if(!auth) return { short:'', long:'' };
+    if(syncing) return { short:'saving', long:'Saving\u2026' };
+    var waiting = pendingCount();
+    if(waiting) return { short:'waiting',
+      long: waiting + (waiting === 1 ? ' sit has' : ' sits have') + ' not reached the server yet. It will keep trying.' };
+    if(syncErr) return { short:'offline', long:'No connection. Your sits are safe here and will be saved when there is one.' };
+    if(!syncLast) return { short:'ready', long:'Signed in. Every finished sit is saved.' };
+    return { short:'saved', long:'Saved ' + ago(syncLast) + '.' };
   }
   function renderSync(){
     var st = syncStatus();
@@ -523,60 +639,63 @@
     if($('syncNote')) $('syncNote').textContent = st.long;
   }
 
-  function syncNow(force){
-    if(!syncOn() || syncing) return;
-    var now = Date.now();
-    if(!force && !syncDirty && now - lastSyncTry < 60000) return;   // don't hammer it on every glance
-    lastSyncTry = now; syncing = true; renderSync();
-    var payload = { log: loadLog(), settings: settings, settingsAt: settingsStamp() };
-    fetch(sync.url.replace(/\/+$/, ''), {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + sync.key },
-      body: JSON.stringify(payload)
-    }).then(function(r){
-      if(!r.ok) throw new Error(r.status === 401 ? 'key' : 'http ' + r.status);
-      return r.json();
-    }).then(function(data){
-      if(data && Array.isArray(data.log)) saveLog(data.log);
-      // The other side may hold newer settings, if this phone was reinstalled.
-      if(data && data.settings && (data.settingsAt || 0) > settingsStamp()){
-        settings = Object.assign({}, DEFAULTS, { lines: DEFAULTS.lines.slice() }, data.settings);
-        if(!Array.isArray(settings.lines) || !settings.lines.length) settings.lines = DEFAULTS.lines.slice();
-        if(!CLIPS[settings.voice]) settings.voice = DEFAULTS.voice;
-        try{ localStorage.setItem(KEY, JSON.stringify(settings)); }catch(e){}
-        setStamp(data.settingsAt);
-        syncSettingsUI(); updatePlan(); drawMarks(); if(session.status === 'idle') renderIdle();
-      }
-      syncing = false; syncDirty = false; sync.last = Date.now(); sync.err = ''; saveSync();
-      renderSync(); renderLog(); if($('calSheet').classList.contains('open')) renderCalendar();
-    }).catch(function(e){
-      syncing = false; syncDirty = true;
-      sync.err = (e && e.message === 'key') ? 'key' : 'net'; saveSync();
-      renderSync();
-      if(sync.err === 'key' && $('syncHelp')) $('syncHelp').textContent = 'That access key was refused. Check it matches the TOKEN secret on your Worker.';
+  /* Give every sit an id, so sending one twice can never count it twice. */
+  function ensureIds(log){
+    var changed = false;
+    log.forEach(function(e){ if(!e.id){ e.id = newId(); changed = true; } });
+    return changed;
+  }
+  function mergeServer(data, pushed){
+    var log = loadLog(), byId = {};
+    log.forEach(function(e){ if(e.id) byId[e.id] = e; });
+    pushed.forEach(function(p){ if(byId[p.id]) byId[p.id].sent = true; });   // safely stored now
+    (data.sits || []).forEach(function(s){                                   // and anything this device lacks
+      if(byId[s.id]){ byId[s.id].sent = true; return; }
+      var e = { id:s.id, at:s.at, s:s.seconds, p:s.planned, c:!!s.complete, sent:true };
+      log.push(e); byId[s.id] = e;
     });
+    log.sort(function(a, b){ return a.at - b.at; });
+    saveLog(log);
+    if(typeof data.now === 'number') setCursor(data.now);
+
+    // the server may hold newer settings, if this device was reinstalled
+    if(data.settings && (data.settingsAt || 0) > settingsStamp()){
+      settings = Object.assign({}, DEFAULTS, { lines: DEFAULTS.lines.slice() }, data.settings);
+      if(!Array.isArray(settings.lines) || !settings.lines.length) settings.lines = DEFAULTS.lines.slice();
+      if(!CLIPS[settings.voice]) settings.voice = DEFAULTS.voice;
+      try{ localStorage.setItem(KEY, JSON.stringify(settings)); }catch(e){}
+      setStamp(data.settingsAt);
+      syncSettingsUI(); updatePlan(); drawMarks(); if(session.status === 'idle') renderIdle();
+    }
   }
-  function connectSync(){
-    var url = ($('syncUrl').value || '').trim(), key = ($('syncKey').value || '').trim();
-    var help = $('syncHelp');
-    if(!/^https:\/\/\S+$/.test(url)){ help.textContent = 'The address should start with https:// and end in workers.dev'; return; }
-    if(!key){ help.textContent = 'Paste the access key you set as the TOKEN secret on the Worker.'; return; }
-    sync.url = url; sync.key = key; sync.err = ''; sync.last = 0; saveSync();
-    help.textContent = 'Connecting…';
-    syncDirty = true; syncNow(true);
-    setTimeout(function(){
-      if(!syncOn()) return;
-      help.textContent = sync.err ? (sync.err === 'key'
-          ? 'That access key was refused. Check it matches the TOKEN secret on your Worker.'
-          : 'Could not reach that address. Check it, and that the Worker is deployed.')
-        : 'Connected. Every finished sit is saved from now on, with nothing for you to do.';
-    }, 2500);
-  }
-  function disconnectSync(){
-    sync = { url:'', key:'', last:0, err:'' }; saveSync();
-    $('syncUrl').value = ''; $('syncKey').value = '';
-    $('syncHelp').textContent = 'Disconnected. Your sits stay on this phone.';
-    renderSync();
+
+  var lastSyncTry = 0;
+  function syncNow(force){
+    if(!auth || syncing) return Promise.resolve();
+    var now = Date.now();
+    if(!force && now - lastSyncTry < 30000) return Promise.resolve();
+    lastSyncTry = now; syncing = true; renderSync();
+
+    var log = loadLog();
+    if(ensureIds(log)) saveLog(log);
+    var pending = log.filter(function(e){ return !e.sent; }).slice(0, 400).map(function(e){
+      return { id:e.id, at:e.at, day:dayKey(e.at),
+               seconds:Math.round(e.s), planned:Math.round(e.p || e.s), complete:!!e.c };
+    });
+
+    var body = { since: cursor(), sits: pending };
+    if(settingsStamp() > 0){ body.settings = settings; body.settingsAt = settingsStamp(); }
+
+    return apiCall('/sync', { method:'POST', body: body }).then(function(data){
+      mergeServer(data, pending);
+      syncing = false; syncErr = ''; syncLast = Date.now();
+      renderSync(); renderLog();
+      if($('calSheet').classList.contains('open')) renderCalendar();
+    }).catch(function(e){
+      syncing = false;
+      if(sessionLost(e)){ signOut(true); return; }
+      syncErr = 'net'; renderSync();     // offline is not a problem, just a later save
+    });
   }
 
   /* ---------- calendar ---------- */
@@ -1140,7 +1259,7 @@
   function syncSettingsUI(){
     $('durRange').value = settings.duration; $('durVal').textContent = settings.duration + ' min'; syncPresets();
     segSync('bellSeg', 'bellEvery'); segSync('settleSeg', 'settle');
-    $('syncUrl').value = sync.url || ''; $('syncKey').value = sync.key || '';
+    if(auth) $('whoami').textContent = 'Signed in as ' + auth.user.name + '.';
     renderSync();
     syncVoiceCount();
     segSync('voiceSeg', 'voice');
@@ -1211,8 +1330,34 @@
   $('calPrev').addEventListener('click', function(){ stepMonth(-1); });
   $('calNext').addEventListener('click', function(){ stepMonth(1); });
 
-  $('syncConnect').addEventListener('click', connectSync);
-  $('syncOff').addEventListener('click', disconnectSync);
+  /* ---------- account ---------- */
+  $('pwToggle').addEventListener('click', function(){
+    var f = $('pwForm');
+    f.hidden = !f.hidden;
+    this.textContent = f.hidden ? 'Change password' : 'Cancel';
+    if(!f.hidden) $('pwCurrent').focus();
+  });
+  $('pwSave').addEventListener('click', function(){
+    var current = $('pwCurrent').value, next = $('pwNext').value;
+    if(next.length < 8){ $('pwHelp').textContent = 'Choose a password of at least 8 characters.'; return; }
+    $('pwHelp').textContent = 'Saving…';
+    apiCall('/auth/password', { method:'POST', body:{ current: current, next: next } })
+      .then(function(){
+        $('pwCurrent').value = ''; $('pwNext').value = '';
+        $('pwForm').hidden = true; $('pwToggle').textContent = 'Change password';
+        $('pwHelp').textContent = 'Your other devices will need signing in again.';
+        $('syncNote').textContent = 'Password changed.';
+      })
+      .catch(function(e){
+        if(sessionLost(e)) { signOut(true); return; }
+        $('pwHelp').textContent = e.message || 'That did not work.';
+      });
+  });
+  $('signOutBtn').addEventListener('click', function(){
+    // tell the server if we can, but sign out here regardless
+    apiCall('/auth/logout', { method:'POST' }).catch(function(){});
+    signOut(false);
+  });
 
   var clearArmed = 0;
   $('clearLog').addEventListener('click', function(){
@@ -1295,13 +1440,143 @@
     else if($('calSheet').classList.contains('open')) closeCal();
   });
 
+  /* ---------- signing in ----------
+     The gate stands in front of the app only when nobody is signed in. Once you are,
+     the token is kept here and the app opens straight away, online or not. */
+  var gateMode = 'login';   // or 'claim'
+
+  function showGate(msg){
+    body.classList.add('gated');
+    $('gate').hidden = false;
+    setGateMode('login');                  // this clears the message, so set it after
+    $('gateMsg').textContent = msg || '';
+    $('gateUser').focus();
+  }
+  function hideGate(){
+    body.classList.remove('gated');
+    $('gate').hidden = true;
+    $('gatePass').value = ''; $('gateCode').value = '';
+  }
+  function setGateMode(mode){
+    gateMode = mode;
+    var claiming = mode === 'claim';
+    $('gateCode').hidden = !claiming;
+    $('gateLead').textContent = claiming
+      ? 'Enter the setup code you were given, and choose a password.'
+      : 'Sign in to keep your practice.';
+    $('gatePass').placeholder = claiming ? 'Choose a password' : 'Password';
+    $('gatePass').setAttribute('autocomplete', claiming ? 'new-password' : 'current-password');
+    $('gateGo').textContent = claiming ? 'Set up' : 'Sign in';
+    $('gateToggle').textContent = claiming ? 'I already have a password' : 'First time here? Set up your account';
+    $('gateMsg').textContent = '';
+  }
+  $('gateToggle').addEventListener('click', function(){
+    setGateMode(gateMode === 'claim' ? 'login' : 'claim');
+  });
+
+  $('gateForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var username = ($('gateUser').value || '').trim();
+    var password = $('gatePass').value || '';
+    var code = ($('gateCode').value || '').trim();
+    if(!username || !password){ $('gateMsg').textContent = 'Fill both boxes.'; return; }
+
+    var tz = '';
+    try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }catch(err){}
+    var claiming = gateMode === 'claim';
+    var payload = { username: username, password: password, tz: tz };
+    if(claiming) payload.code = code;
+
+    $('gateGo').disabled = true;
+    $('gateMsg').textContent = claiming ? 'Setting up…' : 'Signing in…';
+
+    apiCall(claiming ? '/auth/claim' : '/auth/login', { method:'POST', body: payload })
+      .then(function(data){
+        auth = { token: data.token, user: data.user };
+        saveAuth();
+        hideGate();
+        bootForUser(true);
+      })
+      .catch(function(err){
+        $('gateGo').disabled = false;
+        // only the server's own words are worth showing; a failed fetch says "Load failed"
+        var msg = (err && err.status) ? err.message
+                : 'Could not reach the server. Check your connection and try again.';
+        if(err && err.status === 409 && !claiming) setGateMode('claim');   // clears the message
+        $('gateMsg').textContent = msg;
+      })
+      .then(function(){ $('gateGo').disabled = false; });
+  });
+
+  function signOut(expired){
+    auth = null; saveAuth();
+    scopeKeys(null);
+    syncLast = 0; syncErr = ''; lastSyncTry = 0;
+    closeSheet(); closeCal();
+    resetToIdle();
+    showGate(expired ? 'Your session ended. Please sign in again.' : '');
+  }
+
+  /* ---------- history already on this device ----------
+     A record made before there were accounts belongs to whoever made it. Rather than
+     guess, ask once — on a shared iPad the wrong guess would hand someone another
+     person's practice. */
+  var LEGACY = 'still.log.v1', LEGACY_DONE = 'still.legacy.claimed';
+  function legacyLog(){
+    try{
+      var raw = localStorage.getItem(LEGACY);
+      if(!raw) return null;
+      var a = JSON.parse(raw);
+      return (Array.isArray(a) && a.length) ? a : null;
+    }catch(e){ return null; }
+  }
+  function declinedLegacy(){
+    try{ return (localStorage.getItem(LEGACY_DONE) || '').split(',').indexOf(auth.user.id) >= 0; }
+    catch(e){ return true; }
+  }
+  function noteLegacyDecision(){
+    try{
+      var seen = (localStorage.getItem(LEGACY_DONE) || '').split(',').filter(Boolean);
+      if(seen.indexOf(auth.user.id) < 0) seen.push(auth.user.id);
+      localStorage.setItem(LEGACY_DONE, seen.join(','));
+    }catch(e){}
+  }
+  function offerLegacy(){
+    var old = legacyLog();
+    if(!auth || !old || declinedLegacy()) return;
+    if(loadLog().length) return;                 // this account already has a record here
+    var mins = Math.round(old.reduce(function(a, e){ return a + (e.s || 0); }, 0) / 60);
+    var msg = 'There ' + (old.length === 1 ? 'is 1 sit' : 'are ' + old.length + ' sits') +
+              ' saved on this device from before sign-in, ' + mins + ' minutes in all.\n\n' +
+              'Add them to ' + auth.user.name + "'s record?";
+    noteLegacyDecision();
+    if(!window.confirm(msg)) return;             // left alone, so the right person can still claim them
+    var log = old.map(function(e){
+      return { id: newId(), at: e.at, s: e.s, p: e.p || e.s, c: !!e.c, sent: false };
+    });
+    saveLog(log);
+    try{ localStorage.removeItem(LEGACY); }catch(e){}
+    renderLog(); syncNow(true);
+  }
+
+  /* ---------- starting up ---------- */
+  function bootForUser(justSignedIn){
+    scopeKeys(auth.user.id);
+    settings = loadSettings();
+    $('whoami').textContent = 'Signed in as ' + auth.user.name + '.';
+    buildLineList(); syncSettingsUI();
+    resumeSession();        // settle a sit that was cut short by the app being closed
+    renderIdle(); setStatusUI();
+    renderSync();
+    if(justSignedIn) offerLegacy();
+    syncNow(true);
+  }
+
   /* ---------- init ---------- */
   $('progress').setAttribute('stroke-dasharray', CIRC);
-  buildLineList(); syncSettingsUI();
-  resumeSession();          // settle a sit that was cut short by the app being closed
-  renderIdle(); setStatusUI();
   try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function(){}); }catch(e){}
-  renderSync(); syncNow(true);
+  if(auth){ hideGate(); bootForUser(false); }
+  else { buildLineList(); showGate(); }
   // On its own address this page is a full offline app; inside a viewer this quietly does nothing.
   if('serviceWorker' in navigator && window.top === window && location.protocol === 'https:'){
     window.addEventListener('load', function(){ navigator.serviceWorker.register('./sw.js').catch(function(){}); });

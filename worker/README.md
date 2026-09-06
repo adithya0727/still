@@ -113,8 +113,13 @@ creates a fourth person.
 
 ## How it is kept safe
 
-- Passwords are stored as PBKDF2-SHA256, 210,000 iterations, with a random 16-byte
-  salt each. The password itself is never stored and cannot be read back.
+- The password never leaves the device. The browser stretches it with 250,000 rounds of
+  PBKDF2-SHA256 and sends only the result, which the Worker salts and stretches again
+  before storing. Anyone who took the database would still have to pay those 250,000
+  rounds per guess to get back to a password.
+- The heavy work is on the device deliberately: Cloudflare's free plan allows a request
+  10ms of CPU, and stretching a password properly costs far more than that. A Worker that
+  tries is killed mid-hash, and returns a bare 500 with no explanation.
 - A session token is 32 random bytes. Only its SHA-256 is stored, so the database
   never holds anything that could be used to sign in.
 - Sessions last 400 days and renew as you use them. You stay signed in until you sign out.

@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06l';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06m';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -586,6 +586,27 @@
      the browser sends straight out instead of asking permission first with OPTIONS.
      Preflights are quietly dropped by some content blockers, VPNs and company networks,
      and when that happens nothing works and the browser will not say why. */
+  /* ---------- stretching the password here, not on the server ----------
+     A password must be slow to test, and the free Cloudflare plan gives a request 10ms of
+     CPU \u2014 far too little. This device has all the time it needs, so it does the 250,000
+     rounds and sends the result. The password itself never leaves the phone, and anyone
+     who took the database would still have to pay those rounds to get back to it. */
+  var KDF_ROUNDS = 250000;
+  function deriveSecret(username, password){
+    var te = new TextEncoder();
+    var salt = te.encode('still.kdf.v1:' + String(username).trim().toLowerCase());
+    return crypto.subtle.importKey('raw', te.encode(password), 'PBKDF2', false, ['deriveBits'])
+      .then(function(key){
+        return crypto.subtle.deriveBits(
+          { name:'PBKDF2', salt: salt, iterations: KDF_ROUNDS, hash:'SHA-256' }, key, 256);
+      })
+      .then(function(bits){
+        var bytes = new Uint8Array(bits), bin = '';
+        for(var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      });
+  }
+
   var lastAttempt = null;
   function formEncode(o){
     var parts = [];
@@ -1373,7 +1394,8 @@
     var current = $('pwCurrent').value, next = $('pwNext').value;
     if(next.length < 8){ $('pwHelp').textContent = 'Choose a password of at least 8 characters.'; return; }
     $('pwHelp').textContent = 'Saving…';
-    apiCall('password', { body:{ q: current, n: next } })
+    Promise.all([deriveSecret(auth.user.username, current), deriveSecret(auth.user.username, next)])
+      .then(function(keys){ return apiCall('password', { body:{ q: keys[0], n: keys[1] } }); })
       .then(function(){
         $('pwCurrent').value = ''; $('pwNext').value = '';
         $('pwForm').hidden = true; $('pwToggle').textContent = 'Change password';
@@ -1590,6 +1612,14 @@
     var code = ($('gateCode').value || '').trim();
     if(!username || !password){ $('gateMsg').textContent = 'Fill both boxes.'; return; }
 
+    if(password.length < 8){
+      $('gateMsg').textContent = 'Choose a password of at least 8 characters.'; return;
+    }
+    if(!(window.crypto && crypto.subtle)){
+      $('gateMsg').textContent = 'This browser cannot sign in securely here. '
+        + 'Open the published https address rather than a local copy.';
+      return;
+    }
     var tz = '';
     try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }catch(err){}
     var claiming = gateMode === 'claim';
@@ -1607,7 +1637,10 @@
     // form submission can interfere with a request started inside it, and nothing about
     // this call needs the event's context.
     setTimeout(function(){
-    apiCall(claiming ? 'claim' : 'login', { body: payload }).then(
+    deriveSecret(username, password).then(function(secret){
+      payload.p = secret;                       // the password itself stays on this device
+      return apiCall(claiming ? 'claim' : 'login', { body: payload });
+    }).then(
       function(data){
         $('gateGo').disabled = false;
         // A 200 is not the same as a sign-in. An older server, or a proxy answering for one,

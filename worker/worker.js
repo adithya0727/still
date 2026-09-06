@@ -14,12 +14,18 @@
 
 const SESSION_DAYS  = 400;                  // signed in until you sign out
 const SLIDE_MS      = 24 * 60 * 60 * 1000;  // refresh the expiry at most once a day
-const PBKDF2_ITER   = 210000;
+/* The browser does the slow part. Cloudflare's free plan allows 10ms of CPU per request,
+   and stretching a password properly costs far more than that — the isolate is killed
+   mid-hash, which surfaces as a 500 with no CORS headers and no way to explain itself.
+   So the client derives a key from the password with 250,000 rounds and sends that; the
+   server stretches it a little more and stores the result. The password itself never
+   leaves the device, and an attacker with the database still faces the client's rounds. */
+const PBKDF2_ITER   = 1000;
+const KEY_RE        = /^[A-Za-z0-9+/]{43}=$/;   // base64 of 32 bytes, what the client sends
 const MAX_FAILS     = 8;
 const LOCK_MS       = 15 * 60 * 1000;
 const MAX_SITS_SYNC = 500;
 const MAX_SETTINGS  = 16 * 1024;
-const MIN_PASSWORD  = 8;
 
 /* ---------- small helpers ---------- */
 const enc = new TextEncoder();
@@ -220,8 +226,8 @@ async function claim(request, env, body){
   const code = pick(body, 'code', 'c').trim().toUpperCase();
   const password = pick(body, 'password', 'p');
   if (!username || !code) return fail('Enter your name and setup code.', 400, request, env);
-  if (password.length < MIN_PASSWORD)
-    return fail(`Choose a password of at least ${MIN_PASSWORD} characters.`, 400, request, env);
+  if (!KEY_RE.test(password))
+    return fail('This app is out of date. Reload the page and try again.', 400, request, env);
 
   const key = 'claim:' + username;
   if (await throttled(env, key))
@@ -274,8 +280,8 @@ async function login(request, env, body){
 
 async function changePassword(request, env, me, body){
   const next = pick(body, 'next', 'n');
-  if (next.length < MIN_PASSWORD)
-    return fail(`Choose a password of at least ${MIN_PASSWORD} characters.`, 400, request, env);
+  if (!KEY_RE.test(next))
+    return fail('This app is out of date. Reload the page and try again.', 400, request, env);
   const row = await env.DB.prepare('SELECT pw_hash FROM users WHERE id = ?').bind(me.id).first();
   if (!(await verifyPassword(pick(body, 'current', 'q'), row && row.pw_hash)))
     return fail('That current password is not right.', 401, request, env);

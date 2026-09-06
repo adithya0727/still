@@ -442,6 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
+  var BUILD = '2026-09-06e';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -1491,16 +1492,29 @@
   function diagnose(err){
     var d = $('gateDiag');
     d.textContent = 'Checking…';
-    fetch(API + '/', { method:'GET' }).then(function(r){
-      d.textContent = r.ok
-        ? 'The server answers, so the address is right. The sign-in request itself was refused — '
-          + 'most often a content blocker or a private-relay setting. Try another browser to confirm.'
-        : 'The server answered with ' + r.status + '.';
-    }).catch(function(e2){
-      d.textContent = 'Nothing here can reach ' + API.replace(/^https:\/\//, '') + '. '
-        + 'A content blocker, VPN or network filter is the usual cause. '
-        + '(' + ((e2 && e2.name) || 'error') + ': ' + ((e2 && e2.message) || String(e2)) + ')';
-    });
+    var notes = ['build ' + BUILD];
+    notes.push('error ' + ((err && err.name) || '?') + ': ' + ((err && err.message) || '?'));
+
+    function probe(label, init){
+      return fetch(API + '/', init).then(
+        function(r){ notes.push(label + ' ' + r.status + (r.type ? ' (' + r.type + ')' : '')); },
+        function(e){ notes.push(label + ' failed: ' + ((e && e.name) || '?')); });
+    }
+    // a plain read, then the exact shape the sign-in uses
+    probe('read', { method:'GET', cache:'no-store' })
+      .then(function(){
+        return probe('write', { method:'POST', cache:'no-store',
+          headers:{ 'Content-Type':'text/plain;charset=UTF-8' }, body:'{}' });
+      })
+      .then(function(){
+        var readOk  = notes.some(function(n){ return /^read 2/.test(n); });
+        var writeOk = notes.some(function(n){ return /^write \d/.test(n); });
+        var lead = (readOk && writeOk)
+          ? 'The server is reachable, so this is something about the sign-in itself.'
+          : (readOk ? 'The server can be read but not written to. A content blocker or network filter is the usual cause.'
+                    : 'Nothing here can reach ' + API.replace(/^https:\/\//, '') + '.');
+        d.textContent = lead + '  —  ' + notes.join(' · ');
+      });
   }
 
   $('gateForm').addEventListener('submit', function(e){
@@ -1616,8 +1630,21 @@
   if(auth){ hideGate(); bootForUser(false); }
   else { buildLineList(); showGate(); }
   // On its own address this page is a full offline app; inside a viewer this quietly does nothing.
+  /* The cache serves the app instantly and offline, which also means a freshly uploaded
+     version can sit behind yesterday's copy until something forces the issue. Check for a
+     new one on every open, and reload once when it takes over, so an update never needs
+     explaining to anyone. */
   if('serviceWorker' in navigator && window.top === window && location.protocol === 'https:'){
-    window.addEventListener('load', function(){ navigator.serviceWorker.register('./sw.js').catch(function(){}); });
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(function(reg){
+        reg.update();
+        var reloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function(){
+          if(reloading || session.status === 'running' || session.status === 'paused') return;
+          reloading = true; location.reload();
+        });
+      }).catch(function(){});
+    });
   }
   document.addEventListener('visibilitychange', function(){
     if(document.visibilityState !== 'visible') return;

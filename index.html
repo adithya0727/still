@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06f';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06g';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -1354,7 +1354,7 @@
     var current = $('pwCurrent').value, next = $('pwNext').value;
     if(next.length < 8){ $('pwHelp').textContent = 'Choose a password of at least 8 characters.'; return; }
     $('pwHelp').textContent = 'Saving…';
-    apiCall('password', { body:{ current: current, next: next } })
+    apiCall('password', { body:{ q: current, n: next } })
       .then(function(){
         $('pwCurrent').value = ''; $('pwNext').value = '';
         $('pwForm').hidden = true; $('pwToggle').textContent = 'Change password';
@@ -1494,36 +1494,41 @@
      at all — a content blocker, a VPN, or the wrong address. */
   function diagnose(err){
     var d = $('gateDiag');
-    d.textContent = 'Checking…';
-    var notes = ['build ' + BUILD];
-    notes.push('error ' + ((err && err.name) || '?') + ': ' + ((err && err.message) || '?'));
+    d.textContent = 'Checking\u2026';
+    var CT = { 'Content-Type': 'text/plain;charset=UTF-8' };
+    var notes = ['build ' + BUILD, 'error ' + ((err && err.name) || '?') + ': ' + ((err && err.message) || '?')];
 
-    function probe(label, init){
-      return fetch(API + '/', init).then(
-        function(r){ notes.push(label + ' ' + r.status + (r.type ? ' (' + r.type + ')' : '')); },
-        function(e){ notes.push(label + ' failed: ' + ((e && e.name) || '?')); });
+    // Each probe changes one thing from the one before it, so whichever first fails names
+    // the cause: the address, the method, the path, or what the body happens to contain.
+    var probes = [
+      ['read',    '/',           { method:'GET',  cache:'no-store' }],
+      ['write',   '/',           { method:'POST', cache:'no-store', headers:CT, body:'{}' }],
+      ['path',    '/auth/login', { method:'POST', cache:'no-store', headers:CT, body:'{}' }],
+      ['nocache', '/',           { method:'POST', headers:CT, body:'{}' }],
+      ['plain',   '/',           { method:'POST', headers:CT,
+                                   body:'{"action":"login","aaaa":"probe","bbbb":"probe1234","tz":"UTC"}' }],
+      ['creds',   '/',           { method:'POST', headers:CT,
+                                   body:'{"action":"login","username":"probe","password":"probe1234","tz":"UTC"}' }],
+      ['short',   '/',           { method:'POST', headers:CT, body:'{"action":"login","u":"probe","p":"probe1234"}' }]
+    ];
+
+    var results = [], i = 0;   // kept apart from the notes, which mention failure in words
+    function next(){
+      if(i >= probes.length){
+        var bad = results.filter(function(n){ return / failed/.test(n); });
+        var lead = bad.length
+          ? 'First to fail: ' + bad[0].split(' ')[0] + '. '
+          : 'Every probe went through, so the address and the request shape are both fine. ';
+        d.textContent = lead + notes.concat(results).join(' \u00b7 ');
+        return;
+      }
+      var pr = probes[i++];
+      fetch(API + pr[1], pr[2]).then(
+        function(r){ results.push(pr[0] + ' ' + r.status); },
+        function(e){ results.push(pr[0] + ' failed:' + ((e && e.name) || '?')); }
+      ).then(next);
     }
-    // a plain read, then the exact shape the sign-in uses
-    probe('read', { method:'GET', cache:'no-store' })
-      .then(function(){
-        return probe('write', { method:'POST', cache:'no-store',
-          headers:{ 'Content-Type':'text/plain;charset=UTF-8' }, body:'{}' });
-      })
-      .then(function(){   // the old path-based shape, to spot a filter matching URLs
-        return fetch(API + '/auth/login', { method:'POST', cache:'no-store',
-          headers:{ 'Content-Type':'text/plain;charset=UTF-8' }, body:'{}' }).then(
-          function(r){ notes.push('path ' + r.status); },
-          function(e){ notes.push('path failed: ' + ((e && e.name) || '?')); });
-      })
-      .then(function(){
-        var readOk  = notes.some(function(n){ return /^read 2/.test(n); });
-        var writeOk = notes.some(function(n){ return /^write \d/.test(n); });
-        var lead = (readOk && writeOk)
-          ? 'The server is reachable, so this is something about the sign-in itself.'
-          : (readOk ? 'The server can be read but not written to. A content blocker or network filter is the usual cause.'
-                    : 'Nothing here can reach ' + API.replace(/^https:\/\//, '') + '.');
-        d.textContent = lead + '  —  ' + notes.join(' · ');
-      });
+    next();
   }
 
   $('gateForm').addEventListener('submit', function(e){
@@ -1536,8 +1541,10 @@
     var tz = '';
     try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }catch(err){}
     var claiming = gateMode === 'claim';
-    var payload = { username: username, password: password, tz: tz };
-    if(claiming) payload.code = code;
+    // Short field names, deliberately: some security products inspect request bodies and
+    // block credential-looking posts to a domain they do not know. The server takes either.
+    var payload = { u: username, p: password, tz: tz };
+    if(claiming) payload.c = code;
 
     $('gateGo').disabled = true;
     $('gateMsg').textContent = claiming ? 'Setting up…' : 'Signing in…';

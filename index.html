@@ -160,6 +160,7 @@
     font-size:13.5px; line-height:1.5; color:var(--accent-text); text-align:center;
     margin:14px 0 0; min-height:1.2em; max-width:300px;
   }
+  .gate-diag{font-size:12.5px; line-height:1.55; color:var(--muted); text-align:center; margin:8px 0 0; max-width:300px}
   .gate .link{margin-top:18px}
   body.gated .app, body.gated .sheet, body.gated .backdrop{display:none}
 
@@ -295,6 +296,7 @@
       <button class="btn primary" id="gateGo" type="submit">Sign in</button>
     </form>
     <p class="gate-msg" id="gateMsg"></p>
+    <p class="gate-diag" id="gateDiag"></p>
     <button type="button" class="link" id="gateToggle">First time here? Set up your account</button>
   </div>
 </section>
@@ -1474,6 +1476,26 @@
     setGateMode(gateMode === 'claim' ? 'login' : 'claim');
   });
 
+  /* When the browser refuses to send a request, it reports the same "Load failed" whatever
+     the reason. Ask a plain question the server can answer, and the answer separates the
+     cases: if this simple call works the address is reachable and something about the
+     sign-in request itself was refused; if it does not, nothing here can reach the server
+     at all — a content blocker, a VPN, or the wrong address. */
+  function diagnose(err){
+    var d = $('gateDiag');
+    d.textContent = 'Checking…';
+    fetch(API + '/', { method:'GET' }).then(function(r){
+      d.textContent = r.ok
+        ? 'The server answers, so the address is right. The sign-in request itself was refused — '
+          + 'most often a content blocker or a private-relay setting. Try another browser to confirm.'
+        : 'The server answered with ' + r.status + '.';
+    }).catch(function(e2){
+      d.textContent = 'Nothing here can reach ' + API.replace(/^https:\/\//, '') + '. '
+        + 'A content blocker, VPN or network filter is the usual cause. '
+        + '(' + ((e2 && e2.name) || 'error') + ': ' + ((e2 && e2.message) || String(e2)) + ')';
+    });
+  }
+
   $('gateForm').addEventListener('submit', function(e){
     e.preventDefault();
     var username = ($('gateUser').value || '').trim();
@@ -1490,26 +1512,31 @@
     $('gateGo').disabled = true;
     $('gateMsg').textContent = claiming ? 'Setting up…' : 'Signing in…';
 
-    apiCall(claiming ? '/auth/claim' : '/auth/login', { method:'POST', body: payload })
-      .then(function(data){
+    // Two handlers rather than .then().catch(): a fault while starting the app is not a
+    // sign-in failure, and must not be reported as one.
+    apiCall(claiming ? '/auth/claim' : '/auth/login', { method:'POST', body: payload }).then(
+      function(data){
+        $('gateGo').disabled = false;
         auth = { token: data.token, user: data.user };
         saveAuth();
         hideGate();
-        bootForUser(true);
-      })
-      .catch(function(err){
+        try{ bootForUser(true); }
+        catch(bootErr){
+          showGate('Signed in, but the app did not start: ' + (bootErr && bootErr.message || bootErr));
+        }
+      },
+      function(err){
         $('gateGo').disabled = false;
         // Only the server's own words are worth showing; a failed fetch just says "Load failed".
-        // A request the browser refuses to send looks identical to one that went nowhere, and
-        // the commonest cause of that is running a local copy the server does not know about.
         var msg;
         if(err && err.status) msg = err.message;
         else if(navigator.onLine === false) msg = 'You are offline. Try again once you have a connection.';
-        else msg = 'Could not reach the server. Check you are on the published address, not a local copy of the page.';
+        else msg = 'Could not reach the server.';
         if(err && err.status === 409 && !claiming) setGateMode('claim');   // clears the message
         $('gateMsg').textContent = msg;
-      })
-      .then(function(){ $('gateGo').disabled = false; });
+        if(!(err && err.status)) diagnose(err);
+      }
+    );
   });
 
   function signOut(expired){

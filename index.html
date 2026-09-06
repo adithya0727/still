@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06g';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06h';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -586,7 +586,7 @@
      the browser sends straight out instead of asking permission first with OPTIONS.
      Preflights are quietly dropped by some content blockers, VPNs and company networks,
      and when that happens nothing works and the browser will not say why. */
-  function apiCall(action, opts){
+  function apiCall(action, opts, attempt){
     opts = opts || {};
     var payload = { action: action };
     var given = opts.body || {};
@@ -597,6 +597,7 @@
     // reports a plain network failure with nothing to distinguish it from being offline.
     return fetch(API + '/', {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload)
     }).then(function(r){
@@ -610,6 +611,14 @@
         }
         return data;
       });
+    }, function(netErr){
+      // Nothing reached the server at all. On some networks the very first connection to a
+      // host is dropped while a relay, VPN or proxy opens its tunnel, and the one after it
+      // goes straight through. One quiet retry turns a dead sign-in into a working one, and
+      // costs nothing when the network is simply absent.
+      if(attempt) throw netErr;
+      return new Promise(function(done){ setTimeout(done, 600); })
+        .then(function(){ return apiCall(action, opts, 1); });
     });
   }
   // the session is gone for good: drop it, but never on a mere network failure
@@ -1464,11 +1473,15 @@
     setGateMode('login');                  // this clears the message, so set it after
     $('gateMsg').textContent = msg || '';
     $('gateUser').focus();
+    // Say hello while they are still typing, so signing in is never the first connection
+    // this browser makes to the server.
+    try{ fetch(API + '/', { method:'GET', cache:'no-store' }).catch(function(){}); }catch(e){}
   }
   function hideGate(){
     body.classList.remove('gated');
     $('gate').hidden = true;
     $('gatePass').value = ''; $('gateCode').value = '';
+    $('gateMsg').textContent = ''; $('gateDiag').textContent = '';
   }
   function setGateMode(mode){
     gateMode = mode;

@@ -393,10 +393,20 @@ async function adminUsers(request, env, body){
 }
 
 /* ---------- entry ---------- */
+const ACTIONS = {
+  claim:       '/auth/claim',
+  login:       '/auth/login',
+  logout:      '/auth/logout',
+  password:    '/auth/password',
+  sync:        '/sync',
+  leaderboard: '/leaderboard',
+  users:       '/admin/users'
+};
+
 export default {
   async fetch(request, env){
     const url = new URL(request.url);
-    const path = url.pathname.replace(/\/+$/, '') || '/';
+    let path = url.pathname.replace(/\/+$/, '') || '/';
     const method = request.method;
 
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(request, env) });
@@ -407,6 +417,14 @@ export default {
       let body = {};
       if (method === 'POST') { try { body = await request.json(); } catch (e) { body = {}; } }
       if (!body || typeof body !== 'object') body = {};
+
+      // Everything can also be asked for at the root, naming the action in the body. Paths
+      // like /auth/login are matched by content blockers and network filters, which drop the
+      // request before it is sent and report nothing a browser can distinguish from a dead
+      // network. One neutral path avoids the whole class of problem.
+      if (method === 'POST' && typeof body.action === 'string' && ACTIONS[body.action]) {
+        path = ACTIONS[body.action];
+      }
       if (path === '/' || path === '/health')
         return json({ ok: true, service: 'still' }, 200, request, env);
 

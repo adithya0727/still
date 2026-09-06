@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06e';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06f';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -586,13 +586,16 @@
      the browser sends straight out instead of asking permission first with OPTIONS.
      Preflights are quietly dropped by some content blockers, VPNs and company networks,
      and when that happens nothing works and the browser will not say why. */
-  function apiCall(path, opts){
+  function apiCall(action, opts){
     opts = opts || {};
-    var payload = {};
+    var payload = { action: action };
     var given = opts.body || {};
     for(var k in given) payload[k] = given[k];
     if(auth && auth.token) payload.token = auth.token;
-    return fetch(API + path, {
+    // Always the same neutral address. A path like /auth/login is matched by content
+    // blockers and network filters, which drop it before it is sent; the browser then
+    // reports a plain network failure with nothing to distinguish it from being offline.
+    return fetch(API + '/', {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload)
@@ -696,7 +699,7 @@
     var body = { since: cursor(), sits: pending };
     if(settingsStamp() > 0){ body.settings = settings; body.settingsAt = settingsStamp(); }
 
-    return apiCall('/sync', { method:'POST', body: body }).then(function(data){
+    return apiCall('sync', { body: body }).then(function(data){
       mergeServer(data, pending);
       syncing = false; syncErr = ''; syncLast = Date.now();
       renderSync(); renderLog();
@@ -1351,7 +1354,7 @@
     var current = $('pwCurrent').value, next = $('pwNext').value;
     if(next.length < 8){ $('pwHelp').textContent = 'Choose a password of at least 8 characters.'; return; }
     $('pwHelp').textContent = 'Saving…';
-    apiCall('/auth/password', { method:'POST', body:{ current: current, next: next } })
+    apiCall('password', { body:{ current: current, next: next } })
       .then(function(){
         $('pwCurrent').value = ''; $('pwNext').value = '';
         $('pwForm').hidden = true; $('pwToggle').textContent = 'Change password';
@@ -1365,7 +1368,7 @@
   });
   $('signOutBtn').addEventListener('click', function(){
     // tell the server if we can, but sign out here regardless
-    apiCall('/auth/logout', { method:'POST' }).catch(function(){});
+    apiCall('logout', {}).catch(function(){});
     signOut(false);
   });
 
@@ -1506,6 +1509,12 @@
         return probe('write', { method:'POST', cache:'no-store',
           headers:{ 'Content-Type':'text/plain;charset=UTF-8' }, body:'{}' });
       })
+      .then(function(){   // the old path-based shape, to spot a filter matching URLs
+        return fetch(API + '/auth/login', { method:'POST', cache:'no-store',
+          headers:{ 'Content-Type':'text/plain;charset=UTF-8' }, body:'{}' }).then(
+          function(r){ notes.push('path ' + r.status); },
+          function(e){ notes.push('path failed: ' + ((e && e.name) || '?')); });
+      })
       .then(function(){
         var readOk  = notes.some(function(n){ return /^read 2/.test(n); });
         var writeOk = notes.some(function(n){ return /^write \d/.test(n); });
@@ -1535,7 +1544,7 @@
 
     // Two handlers rather than .then().catch(): a fault while starting the app is not a
     // sign-in failure, and must not be reported as one.
-    apiCall(claiming ? '/auth/claim' : '/auth/login', { method:'POST', body: payload }).then(
+    apiCall(claiming ? 'claim' : 'login', { body: payload }).then(
       function(data){
         $('gateGo').disabled = false;
         auth = { token: data.token, user: data.user };

@@ -90,7 +90,7 @@ function cors(request, env){
   const h = {
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Max-Age': '86400',
+    'Access-Control-Max-Age': '600',
     'Vary': 'Origin'
   };
   if (allow) h['Access-Control-Allow-Origin'] = allow;
@@ -131,10 +131,18 @@ function cleanSit(raw){
 }
 
 /* ---------- sessions ---------- */
-async function authenticate(request, env){
+function bearer(request, body){
   const m = (request.headers.get('Authorization') || '').match(/^Bearer\s+(.+)$/i);
-  if (!m) return null;
-  const hash = await sha256hex(m[1].trim());
+  if (m) return m[1].trim();
+  // A request with no custom headers needs no CORS preflight, so the client may send the
+  // token in the body instead. Some networks and blockers drop OPTIONS entirely.
+  if (body && typeof body.token === 'string') return body.token.trim();
+  return null;
+}
+async function authenticate(request, env, body){
+  const token = bearer(request, body);
+  if (!token) return null;
+  const hash = await sha256hex(token);
   const row = await env.DB.prepare(
     `SELECT s.token_hash, s.last_seen, s.expires_at,
             u.id, u.username, u.name, u.tz, u.is_admin
@@ -200,8 +208,7 @@ async function readSettings(env, userId){
 }
 
 /* ---------- routes ---------- */
-async function claim(request, env){
-  const body = await request.json().catch(() => ({}));
+async function claim(request, env, body){
   const username = String(body.username || '').trim().toLowerCase();
   const code = String(body.code || '').trim().toUpperCase();
   const password = String(body.password || '');
@@ -231,8 +238,7 @@ async function claim(request, env){
   return json({ token: await openSession(env, user.id), user: publicUser(user) }, 200, request, env);
 }
 
-async function login(request, env){
-  const body = await request.json().catch(() => ({}));
+async function login(request, env, body){
   const username = String(body.username || '').trim().toLowerCase();
   const password = String(body.password || '');
   if (!username || !password) return fail('Enter your name and password.', 400, request, env);
@@ -259,8 +265,7 @@ async function login(request, env){
   return json({ token: await openSession(env, user.id), user: publicUser(user) }, 200, request, env);
 }
 
-async function changePassword(request, env, me){
-  const body = await request.json().catch(() => ({}));
+async function changePassword(request, env, me, body){
   const next = String(body.next || '');
   if (next.length < MIN_PASSWORD)
     return fail(`Choose a password of at least ${MIN_PASSWORD} characters.`, 400, request, env);
@@ -275,9 +280,9 @@ async function changePassword(request, env, me){
   return json({ ok: true }, 200, request, env);
 }
 
-async function sync(request, env, me){
-  const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+async function sync(request, env, me, body){
   const url = new URL(request.url);
+  body = body || {};
   const since = Math.max(0, Number(body.since ?? url.searchParams.get('since') ?? 0) || 0);
   const now = Date.now();
 
@@ -314,13 +319,11 @@ async function sync(request, env, me){
   }, 200, request, env);
 }
 
-async function leaderboard(request, env, me){
+async function leaderboard(request, env, me, body){
   const url = new URL(request.url);
-  const month = MON_RE.test(url.searchParams.get('month') || '')
-    ? url.searchParams.get('month')
-    : todayIn(me.tz).slice(0, 7);
-  const clientToday = DAY_RE.test(url.searchParams.get('today') || '')
-    ? url.searchParams.get('today') : null;
+  const ask = (k) => (body && body[k]) || url.searchParams.get(k) || '';
+  const month = MON_RE.test(ask('month')) ? ask('month') : todayIn(me.tz).slice(0, 7);
+  const clientToday = DAY_RE.test(ask('today')) ? ask('today') : null;
 
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.name, u.tz,
@@ -364,8 +367,7 @@ async function leaderboard(request, env, me){
 }
 
 /* Creating or resetting an account without opening the database console. */
-async function adminUsers(request, env){
-  const body = await request.json().catch(() => ({}));
+async function adminUsers(request, env, body){
   const username = String(body.username || '').trim().toLowerCase();
   const name = String(body.name || '').trim();
   const code = String(body.code || '').trim().toUpperCase();
@@ -400,31 +402,36 @@ export default {
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(request, env) });
 
     try {
+      // Read it once. The client sends text/plain so the browser treats these as simple
+      // requests and skips the preflight; the body is still JSON either way.
+      let body = {};
+      if (method === 'POST') { try { body = await request.json(); } catch (e) { body = {}; } }
+      if (!body || typeof body !== 'object') body = {};
       if (path === '/' || path === '/health')
         return json({ ok: true, service: 'still' }, 200, request, env);
 
-      if (path === '/auth/claim' && method === 'POST') return claim(request, env);
-      if (path === '/auth/login' && method === 'POST') return login(request, env);
+      if (path === '/auth/claim' && method === 'POST') return claim(request, env, body);
+      if (path === '/auth/login' && method === 'POST') return login(request, env, body);
 
       if (path === '/admin/users' && method === 'POST') {
-        const given = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+        const given = String(bearer(request, body) || '');
         const want = String(env.ADMIN_TOKEN || '');
         if (!want || given.length !== want.length || !sameBytes(enc.encode(given), enc.encode(want)))
           return fail('Not allowed.', 403, request, env);
-        return adminUsers(request, env);
+        return adminUsers(request, env, body);
       }
 
-      const me = await authenticate(request, env);
+      const me = await authenticate(request, env, body);
       if (!me) return fail('Sign in again.', 401, request, env);
 
       if (path === '/auth/logout' && method === 'POST') {
         await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(me.token_hash).run();
         return json({ ok: true }, 200, request, env);
       }
-      if (path === '/auth/password' && method === 'POST') return changePassword(request, env, me);
-      if (path === '/me' && method === 'GET') return sync(request, env, me);
-      if (path === '/sync' && method === 'POST') return sync(request, env, me);
-      if (path === '/leaderboard' && method === 'GET') return leaderboard(request, env, me);
+      if (path === '/auth/password' && method === 'POST') return changePassword(request, env, me, body);
+      if (path === '/me' && method === 'GET') return sync(request, env, me, {});
+      if (path === '/sync' && method === 'POST') return sync(request, env, me, body);
+      if (path === '/leaderboard' && (method === 'GET' || method === 'POST')) return leaderboard(request, env, me, body);
 
       return fail('No such route.', 404, request, env);
     } catch (err) {

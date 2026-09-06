@@ -580,14 +580,21 @@
   /* ---------- talking to the Worker ----------
      A failed call is not a reason to sign anyone out. Only the server saying the session
      is no longer good does that, and a network that is simply absent changes nothing. */
+  /* Everything is a POST carrying text/plain, and the session token travels in the body
+     rather than an Authorization header. That keeps every call a "simple" request, which
+     the browser sends straight out instead of asking permission first with OPTIONS.
+     Preflights are quietly dropped by some content blockers, VPNs and company networks,
+     and when that happens nothing works and the browser will not say why. */
   function apiCall(path, opts){
     opts = opts || {};
-    var headers = { 'Content-Type': 'application/json' };
-    if(auth && auth.token) headers.Authorization = 'Bearer ' + auth.token;
+    var payload = {};
+    var given = opts.body || {};
+    for(var k in given) payload[k] = given[k];
+    if(auth && auth.token) payload.token = auth.token;
     return fetch(API + path, {
-      method: opts.method || 'GET',
-      headers: headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload)
     }).then(function(r){
       return r.text().then(function(text){
         var data = {};

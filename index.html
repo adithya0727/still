@@ -164,6 +164,20 @@
   .gate .link{margin-top:18px}
   body.gated .app, body.gated .sheet, body.gated .backdrop{display:none}
 
+  /* ---- everyone's practice ---- */
+  .board{display:flex;flex-direction:column;margin-top:4px}
+  .board-row{padding:15px 0;border-bottom:1px solid var(--line)}
+  .board-row:last-child{border-bottom:0}
+  .board-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .board-name{font-size:16px;font-weight:400;color:var(--text)}
+  .board-you{font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--accent-text);margin-left:8px}
+  .board-hours{font-size:21px;font-weight:300;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .board-row.quiet .board-hours{color:var(--muted)}
+  .board-sub{font-size:13px;color:var(--muted);margin-top:4px}
+  .board-bar{height:3px;border-radius:2px;background:var(--track);margin-top:10px;overflow:hidden}
+  .board-bar span{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width .45s ease}
+  .board-row.you .board-bar span{background:var(--accent)}
+
   /* ---- settings sheet ---- */
   .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .3s ease;z-index:15}
   .backdrop.show{opacity:1;pointer-events:auto}
@@ -237,6 +251,9 @@
     <div class="top-btns">
     <button class="icon-btn" id="calBtn" aria-label="Practice calendar" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/><circle cx="12" cy="14.5" r="1.6" fill="currentColor" stroke="none"/></svg>
+    </button>
+    <button class="icon-btn" id="boardBtn" aria-label="Everyone's practice" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.4" r="3.1"/><path d="M3.6 19.4c0-3 2.4-4.9 5.4-4.9s5.4 1.9 5.4 4.9"/><circle cx="17.6" cy="9.6" r="2.1"/><path d="M17.6 14.1c2 0 3.4 1.3 3.6 3.1"/></svg>
     </button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17.5 7H20M4 17h3M11.5 17H20"/><circle cx="15" cy="7" r="2.5"/><circle cx="9" cy="17" r="2.5"/></svg>
@@ -326,6 +343,22 @@
   <div class="sheet-actions">
     <button type="button" class="link" id="clearLog">Clear history</button>
     <button type="button" class="btn primary small" id="calDone">Done</button>
+  </div>
+</section>
+<div class="backdrop" id="boardBackdrop"></div>
+<section class="sheet" id="boardSheet" role="dialog" aria-label="Everyone's practice" aria-modal="true">
+  <div class="sheet-handle"></div>
+  <h2>Together</h2>
+  <p class="lead">How everyone is sitting.</p>
+  <div class="seg" id="boardSeg">
+    <button type="button" data-val="month">This month</button>
+    <button type="button" data-val="all">All time</button>
+  </div>
+  <div class="board" id="boardList"></div>
+  <p class="sub" id="boardNote"></p>
+  <div class="sheet-actions">
+    <span></span>
+    <button type="button" class="btn primary small" id="boardDone">Done</button>
   </div>
 </section>
 <section class="sheet" id="sheet" role="dialog" aria-label="Settings" aria-modal="true">
@@ -442,7 +475,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06m';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06n';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -461,12 +494,12 @@
 
   /* Each person's record is kept under their own keys, so two people sharing an iPad
      never see one another's history. */
-  var KEY, LOGKEY, SESSKEY, STAMPKEY, CURSORKEY;
+  var KEY, LOGKEY, SESSKEY, STAMPKEY, CURSORKEY, BOARDKEY;
   function scopeKeys(uid){
     var p = uid ? 'still.u.' + uid + '.' : 'still.';
     KEY = p + 'settings.v1'; LOGKEY = p + 'log.v1';
     SESSKEY = p + 'session.v1'; STAMPKEY = p + 'settings.at';
-    CURSORKEY = p + 'pulled.at';
+    CURSORKEY = p + 'pulled.at'; BOARDKEY = p + 'board.v1';
   }
   scopeKeys(auth && auth.user.id);
 
@@ -1205,6 +1238,7 @@
     $('presets').classList.toggle('hidden', st !== 'idle');
     $('settingsBtn').disabled = !(st === 'idle' || st === 'done');
     $('calBtn').disabled = !(st === 'idle' || st === 'done');
+    $('boardBtn').disabled = !(st === 'idle' || st === 'done');
     updateHint();
   }
   function updateHint(){
@@ -1425,6 +1459,112 @@
     saveSettings(); syncSettingsUI(); onSettingsChanged();
   });
 
+
+  /* ---------- everyone's practice ----------
+     Totals only: the server never hands over anyone else's individual sits. The last
+     figures are kept here, so opening this with no connection shows what was true
+     rather than an empty screen. */
+  var boardPeriod = 'month', boardData = null;
+
+  function loadBoard(){
+    try{
+      var o = JSON.parse(localStorage.getItem(BOARDKEY) || 'null');
+      return (o && Array.isArray(o.rows)) ? o : null;
+    }catch(e){ return null; }
+  }
+  function saveBoard(){
+    try{ localStorage.setItem(BOARDKEY, JSON.stringify(boardData)); }catch(e){}
+  }
+  function syncBoardSeg(){
+    Array.prototype.forEach.call($('boardSeg').querySelectorAll('button'), function(b){
+      b.classList.toggle('on', b.getAttribute('data-val') === boardPeriod);
+    });
+  }
+  function renderBoard(){
+    var list = $('boardList');
+    list.innerHTML = '';
+    if(!boardData || !boardData.rows.length) return;
+
+    var key = boardPeriod === 'all' ? 'all' : 'month';
+    var rows = boardData.rows.slice().sort(function(a, b){
+      return (b[key].seconds - a[key].seconds) || a.name.localeCompare(b.name);
+    });
+    var most = Math.max(1, rows[0][key].seconds);
+
+    rows.forEach(function(r){
+      var d = r[key] || { seconds:0, sits:0, days:0 };
+      var row = document.createElement('div');
+      row.className = 'board-row' + (r.you ? ' you' : '') + (d.seconds ? '' : ' quiet');
+
+      var top = document.createElement('div'); top.className = 'board-top';
+      var name = document.createElement('span'); name.className = 'board-name';
+      name.textContent = r.name;
+      if(r.you){
+        var tag = document.createElement('span'); tag.className = 'board-you';
+        tag.textContent = 'you'; name.appendChild(tag);
+      }
+      var hrs = document.createElement('span'); hrs.className = 'board-hours';
+      hrs.textContent = d.seconds ? fmtTotal(d.seconds) : 'nothing yet';
+      top.appendChild(name); top.appendChild(hrs);
+
+      var sub = document.createElement('p'); sub.className = 'board-sub';
+      var bits = [d.sits + (d.sits === 1 ? ' sit' : ' sits'),
+                  d.days + (d.days === 1 ? ' day' : ' days')];
+      // the streak is a running count, so it belongs to now rather than to the period
+      if(r.streak) bits.push(r.streak + (r.streak === 1 ? ' day running' : ' days running'));
+      sub.textContent = bits.join(' \u00b7 ');
+
+      var bar = document.createElement('div'); bar.className = 'board-bar';
+      var fill = document.createElement('span');
+      fill.style.width = Math.round(100 * d.seconds / most) + '%';
+      bar.appendChild(fill);
+
+      row.appendChild(top); row.appendChild(sub); row.appendChild(bar);
+      list.appendChild(row);
+    });
+  }
+  function fetchBoard(){
+    if(!auth) return;
+    var now = new Date();
+    var month = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
+    apiCall('leaderboard', { body: { month: month, today: dayKey(Date.now()) } })
+      .then(function(data){
+        if(!data || !Array.isArray(data.rows)) throw new Error('unexpected reply');
+        boardData = { rows: data.rows, month: data.month, at: Date.now() };
+        saveBoard(); renderBoard();
+        $('boardNote').textContent = '';
+      })
+      .catch(function(e){
+        if(sessionLost(e)){ signOut(true); return; }
+        $('boardNote').textContent = boardData
+          ? 'Could not refresh just now. This is how it stood ' + ago(boardData.at) + '.'
+          : 'Could not reach the server. Try again when you have a connection.';
+      });
+  }
+  function openBoard(){
+    restSheet($('boardSheet'), $('boardBackdrop'));
+    boardData = loadBoard();
+    syncBoardSeg(); renderBoard();
+    $('boardNote').textContent = boardData ? '' : 'Looking\u2026';
+    $('boardSheet').scrollTop = 0;
+    $('boardSheet').classList.add('open'); $('boardBackdrop').classList.add('show');
+    syncNow(false);          // push anything of ours first, so our own figures are current
+    fetchBoard();
+  }
+  function closeBoard(){
+    restSheet($('boardSheet'), $('boardBackdrop'));
+    $('boardSheet').classList.remove('open'); $('boardBackdrop').classList.remove('show');
+  }
+  $('boardBtn').addEventListener('click', openBoard);
+  $('boardDone').addEventListener('click', closeBoard);
+  $('boardBackdrop').addEventListener('click', closeBoard);
+  Array.prototype.forEach.call($('boardSeg').querySelectorAll('button'), function(b){
+    b.addEventListener('click', function(){
+      boardPeriod = b.getAttribute('data-val');
+      syncBoardSeg(); renderBoard();
+    });
+  });
+
   /* ---------- drag a sheet down to dismiss ----------
      The sheet still scrolls normally. A downward drag only becomes a dismissal when the
      content is already at the top, or when the drag began on the handle. Once we claim the
@@ -1487,11 +1627,13 @@
   }
   makeDismissible($('sheet'), $('backdrop'), closeSheet);
   makeDismissible($('calSheet'), $('calBackdrop'), closeCal);
+  makeDismissible($('boardSheet'), $('boardBackdrop'), closeBoard);
 
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape' && e.key !== 'Esc') return;
     if($('sheet').classList.contains('open')) closeSheet();
     else if($('calSheet').classList.contains('open')) closeCal();
+    else if($('boardSheet').classList.contains('open')) closeBoard();
   });
 
   /* ---------- signing in ----------
@@ -1679,7 +1821,8 @@
     auth = null; saveAuth();
     scopeKeys(null);
     syncLast = 0; syncErr = ''; lastSyncTry = 0;
-    closeSheet(); closeCal();
+    closeSheet(); closeCal(); closeBoard();
+    boardData = null;
     resetToIdle();
     showGate(expired ? 'Your session ended. Please sign in again.' : '');
   }

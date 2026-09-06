@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06k';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06l';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -1610,6 +1610,15 @@
     apiCall(claiming ? 'claim' : 'login', { body: payload }).then(
       function(data){
         $('gateGo').disabled = false;
+        // A 200 is not the same as a sign-in. An older server, or a proxy answering for one,
+        // can return something perfectly well-formed that simply is not a session — and
+        // trusting it produces a crash later, far from the cause.
+        if(!data || !data.token || !data.user || !data.user.id){
+          $('gateMsg').textContent = 'The server replied, but not with a sign-in. '
+            + 'It may be running an older version than this app.';
+          diagnose(new Error('unexpected reply: ' + JSON.stringify(data).slice(0, 120)));
+          return;
+        }
         auth = { token: data.token, user: data.user };
         saveAuth();
         hideGate();

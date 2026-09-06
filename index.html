@@ -442,7 +442,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06i';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06k';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -587,6 +587,11 @@
      Preflights are quietly dropped by some content blockers, VPNs and company networks,
      and when that happens nothing works and the browser will not say why. */
   var lastAttempt = null;
+  function formEncode(o){
+    var parts = [];
+    for(var k in o) parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(o[k]));
+    return parts.join('&');
+  }
   function apiCall(action, opts, attempt){
     opts = opts || {};
     var payload = { action: action };
@@ -596,13 +601,15 @@
     // Always the same neutral address. A path like /auth/login is matched by content
     // blockers and network filters, which drop it before it is sent; the browser then
     // reports a plain network failure with nothing to distinguish it from being offline.
-    // kept so the diagnostics can replay byte for byte what actually failed
-    lastAttempt = {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(payload)
-    };
+    // Second try goes out in a different shape. Both are CORS-simple, so neither asks
+    // permission first, but a middlebox objecting to one may let the other through.
+    lastAttempt = (attempt === 1)
+      ? { method:'POST', cache:'no-store',
+          headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: formEncode(payload) }
+      : { method:'POST', cache:'no-store',
+          headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+          body: JSON.stringify(payload) };
     return fetch(API + '/', lastAttempt).then(function(r){
       return r.text().then(function(text){
         var data = {};
@@ -619,9 +626,9 @@
       // host is dropped while a relay, VPN or proxy opens its tunnel, and the one after it
       // goes straight through. One quiet retry turns a dead sign-in into a working one, and
       // costs nothing when the network is simply absent.
-      if(attempt) throw netErr;
+      if(attempt >= 1) throw netErr;
       return new Promise(function(done){ setTimeout(done, 600); })
-        .then(function(){ return apiCall(action, opts, 1); });
+        .then(function(){ return apiCall(action, opts, (attempt || 0) + 1); });
     });
   }
   // the session is gone for good: drop it, but never on a mere network failure
@@ -1522,13 +1529,40 @@
       ['path',    '/auth/login', { method:'POST', cache:'no-store', headers:CT, body:'{}' }],
       ['nocache', '/',           { method:'POST', headers:CT, body:'{}' }],
       ['plain',   '/',           { method:'POST', headers:CT,
-                                   body:'{"action":"login","aaaa":"probe","bbbb":"probe1234","tz":"UTC"}' }],
+                                   body: JSON.stringify({ action:"login", aaaa:"p"+Math.random(), bbbb:"probe1234", tz:"UTC" }) }],
       ['creds',   '/',           { method:'POST', headers:CT,
-                                   body:'{"action":"login","username":"probe","password":"probe1234","tz":"UTC"}' }],
-      ['short',   '/',           { method:'POST', headers:CT, body:'{"action":"login","u":"probe","p":"probe1234"}' }]
+                                   body: JSON.stringify({ action:"login", username:"p"+Math.random(), password:"probe1234", tz:"UTC" }) }],
+      ['short',   '/',           { method:'POST', headers:CT, body: JSON.stringify({ action:"login", u:"p"+Math.random(), p:"probe1234" }) }]
     ];
 
-    if(lastAttempt) probes.push(['replay', '/', lastAttempt]);
+    /* The real request failed while invented ones went through, so the difference is in the
+       body. Change one field at a time from the real thing: whichever variant gets through
+       names the field that is being objected to. Nothing here is guesswork any more. */
+    if(lastAttempt){
+      probes.unshift(['replay', '/', lastAttempt]);   // first, so order cannot be blamed
+      var real = {};
+      try{ real = JSON.parse(lastAttempt.body); }catch(e){}
+      var variant = function(label, change){
+        var o = {};
+        try{ o = JSON.parse(lastAttempt.body); }catch(e){ return; }
+        change(o);
+        probes.push([label, '/', { method:'POST', cache:'no-store', headers:CT, body: JSON.stringify(o) }]);
+      };
+      // the same fields in the other wire shape
+      if(real && real.action) probes.push(['form', '/', { method:'POST', cache:'no-store',
+        headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: formEncode(real) }]);
+      // same shape and length, plain characters: separates the value from the field
+      variant('pw',   function(o){ o.p = new Array(String(o.p || '').length + 1).join('x'); });
+      variant('user', function(o){ o.u = 'p' + Math.random(); });
+      variant('code', function(o){ delete o.c; });
+      variant('tz',   function(o){ delete o.tz; });
+      variant('act',  function(o){ o.action = 'login'; });
+      // a body of the same length with nothing real in it, to rule out size
+      var pad = new Array(Math.max(1, lastAttempt.body.length - 40)).join('x');
+      probes.push(['size', '/', { method:'POST', cache:'no-store', headers:CT,
+        body: JSON.stringify({ action:'login', u:'probe', p:pad }) }]);
+    }
 
     var results = [], i = 0;   // kept apart from the notes, which mention failure in words
     function next(){

@@ -421,8 +421,17 @@ export default {
     try {
       // Read it once. The client sends text/plain so the browser treats these as simple
       // requests and skips the preflight; the body is still JSON either way.
+      // JSON, or the same fields form-encoded. The client falls back to the second when a
+      // request never arrives, because some middleboxes object to one shape and not the other.
       let body = {};
-      if (method === 'POST') { try { body = await request.json(); } catch (e) { body = {}; } }
+      if (method === 'POST') {
+        const raw = await request.text().catch(() => '');
+        try { body = JSON.parse(raw); }
+        catch (e) {
+          body = {};
+          try { for (const [k, v] of new URLSearchParams(raw)) body[k] = v; } catch (e2) {}
+        }
+      }
       if (!body || typeof body !== 'object') body = {};
 
       // Everything can also be asked for at the root, naming the action in the body. Paths

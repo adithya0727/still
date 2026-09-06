@@ -20,45 +20,50 @@
   :root{
     --bg:#e6eae9; --surface:#f2f4f3; --text:#262c31; --muted:#737b82; --accent:#b4884e; --accent-text:#8a6635;
     --track:#cfd5d4; --line:#d7dcdb; --btn:#262c31; --btn-text:#f2f4f3; --btn2:#262c31;
-    --knob:#ffffff; --shadow:0 -12px 40px rgba(20,30,40,.18); --focus:#4a78b8;
+    --knob:#ffffff; --shadow:0 -12px 40px rgba(20,30,40,.18); --focus:#4a78b8; --breath:#b4884e;
   }
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
       --bg:#151b24; --surface:#1d2530; --text:#e7e3db; --muted:#8892a0; --accent:#d2a868; --accent-text:#d2a868;
       --track:#2b3440; --line:#2b3440; --btn:#e7e3db; --btn-text:#151b24; --btn2:#e7e3db;
-      --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.55); --focus:#8fb4ea;
+      --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.55); --focus:#8fb4ea; --breath:#d2a868;
     }
   }
   :root[data-theme="dark"]{
     --bg:#151b24; --surface:#1d2530; --text:#e7e3db; --muted:#8892a0; --accent:#d2a868; --accent-text:#d2a868;
     --track:#2b3440; --line:#2b3440; --btn:#e7e3db; --btn-text:#151b24; --btn2:#e7e3db;
-    --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.55); --focus:#8fb4ea;
+    --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.55); --focus:#8fb4ea; --breath:#d2a868;
   }
   /* ---- chosen palettes. Last, so they settle the question either way. ---- */
   :root[data-palette="sage"]{
     --bg:#e7ece6; --surface:#f2f6f1; --text:#252e28; --muted:#6d7a70; --accent:#6f9070; --accent-text:#54755a;
     --track:#ccd6c9; --line:#d7e0d4; --btn:#252e28; --btn-text:#f2f6f1; --btn2:#252e28;
     --knob:#ffffff; --shadow:0 -12px 40px rgba(30,45,35,.16); --focus:#54755a;
+    --breath:#6f9070;
   }
   :root[data-palette="lavender"]{
     --bg:#ebe9f1; --surface:#f5f3f9; --text:#292633; --muted:#736f83; --accent:#8878b6; --accent-text:#6a5b9e;
     --track:#d5d0e1; --line:#dfdbe9; --btn:#292633; --btn-text:#f5f3f9; --btn2:#292633;
     --knob:#ffffff; --shadow:0 -12px 40px rgba(35,30,50,.16); --focus:#6a5b9e;
+    --breath:#8878b6;
   }
   :root[data-palette="purple"]{
     --bg:#191426; --surface:#231c33; --text:#e8e3f2; --muted:#948aa9; --accent:#b49ce2; --accent-text:#b49ce2;
     --track:#312745; --line:#312745; --btn:#e8e3f2; --btn-text:#191426; --btn2:#e8e3f2;
     --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.6); --focus:#b49ce2;
+    --breath:#b49ce2;
   }
   :root[data-palette="charcoal"]{
     --bg:#1b1c1e; --surface:#25272a; --text:#e6e4e1; --muted:#8c8f94; --accent:#bfa683; --accent-text:#bfa683;
     --track:#33363a; --line:#33363a; --btn:#e6e4e1; --btn-text:#1b1c1e; --btn2:#e6e4e1;
     --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.6); --focus:#bfa683;
+    --breath:#bfa683;
   }
   :root[data-palette="black"]{
     --bg:#000000; --surface:#0b0b0c; --text:#e3e3e3; --muted:#78787b; --accent:#cda862; --accent-text:#cda862;
     --track:#191919; --line:#1c1c1c; --btn:#e3e3e3; --btn-text:#000000; --btn2:#e3e3e3;
     --knob:#ffffff; --shadow:0 -12px 40px rgba(0,0,0,.8); --focus:#cda862;
+    --breath:#cda862;
   }
 
   /* during the sit: true black, everything dim */
@@ -104,6 +109,19 @@
   .ring .progress{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;transition:stroke-dashoffset .3s linear, stroke .9s ease}
   .ring .mark{stroke:var(--muted);stroke-width:1.5;stroke-linecap:round;transition:stroke .9s ease}
   .ring .dot{fill:var(--bg);stroke:var(--accent);stroke-width:1.5;transition:stroke .9s ease, fill .9s ease}
+  .breath{
+    position:absolute;top:50%;left:50%;width:58%;aspect-ratio:1;margin:0;
+    transform:translate(-50%,-50%) scale(.7);border-radius:50%;
+    background:radial-gradient(circle at 50% 50%, var(--breath) 0%, transparent 68%);
+    opacity:0;pointer-events:none;transition:opacity 1.6s ease;
+  }
+  body.sitting .breath{opacity:.55;animation:breathe 12s ease-in-out infinite}
+  @keyframes breathe{
+    0%   {transform:translate(-50%,-50%) scale(.70)}
+    40%  {transform:translate(-50%,-50%) scale(1.00)}
+    52%  {transform:translate(-50%,-50%) scale(1.00)}
+    100% {transform:translate(-50%,-50%) scale(.70)}
+  }
   .readout{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .9s ease}
   .time{font-size:clamp(58px,19vw,80px);font-weight:300;letter-spacing:.02em;line-height:1;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
   .state{margin-top:12px;font-size:15px;color:var(--muted);min-height:1.3em;text-align:center;padding:0 26px;line-height:1.3;transition:color .9s ease}
@@ -117,9 +135,33 @@
   .presets button.on{background:var(--btn);color:var(--btn-text);border-color:var(--btn)}
   .presets-unit{font-size:13px;color:var(--muted);margin-left:2px}
   .top-btns{display:flex;gap:8px;flex:0 0 auto}
-  .streak{text-align:center;padding:2px 0 18px}
+  .streak{display:flex;align-items:flex-end;justify-content:center;gap:28px;padding:2px 0 18px}
+  .streak-one{text-align:center}
   .streak-num{font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:500;font-size:60px;line-height:1;color:var(--accent-text)}
   .streak-lab{font-size:14px;color:var(--muted);margin-top:4px}
+  .streak-one.best .streak-num{font-size:32px;color:var(--muted)}
+  .streak-one.best .streak-lab{font-size:12.5px}
+
+  /* the year, one square a day */
+  .year{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+  .year-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .year-head .label{font-size:16px;font-weight:400;color:var(--text)}
+  .year-head .val{font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .year-grid{
+    display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);
+    gap:2px;margin-top:12px;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;
+  }
+  .year-grid::-webkit-scrollbar{display:none}
+  .y-cell{width:100%;aspect-ratio:1;min-width:4px;border-radius:1.5px;background:var(--track)}
+  .y-cell.pad{background:transparent}
+  .y-cell.on{background:var(--accent)}
+  .year-scale{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-top:7px}
+
+  /* who has sat today */
+  .board-dot{
+    display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--accent);margin-right:8px;vertical-align:middle;flex:0 0 auto;
+  }
   .cal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:14px}
   .cal-title{font-size:17px;font-weight:400}
   .cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin:14px 0 6px}
@@ -277,6 +319,7 @@
   @media (max-height:640px){ .dial{width:min(70vw,240px)} .plan{margin-top:14px} }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:.01ms!important}
+    .breath{animation:none!important}
   }
 </style>
 </head>
@@ -305,6 +348,7 @@
       <circle class="progress" id="progress" cx="160" cy="160" r="140" stroke-dasharray="879.646" stroke-dashoffset="879.646"/>
       <g id="marks"></g>
     </svg>
+    <div class="breath" id="breath" aria-hidden="true"></div>
     <div class="readout">
       <div class="time" id="time">30:00</div>
       <div class="state" id="state">Ready when you are</div>
@@ -359,8 +403,14 @@
 <section class="sheet" id="calSheet" role="dialog" aria-label="Practice calendar" aria-modal="true">
   <div class="sheet-handle"></div>
   <div class="streak">
-    <div class="streak-num" id="streakNum">0</div>
-    <div class="streak-lab" id="streakLab">day streak</div>
+    <div class="streak-one">
+      <div class="streak-num" id="streakNum">0</div>
+      <div class="streak-lab" id="streakLab">day streak</div>
+    </div>
+    <div class="streak-one best">
+      <div class="streak-num" id="bestNum">0</div>
+      <div class="streak-lab" id="bestLab">best</div>
+    </div>
   </div>
   <div class="cal-head">
     <button type="button" class="icon-btn" id="calPrev" aria-label="Previous month">
@@ -375,6 +425,12 @@
   <div class="cal-grid" id="calGrid"></div>
   <p class="cal-detail" id="calDetail"></p>
   <p class="cal-month" id="calMonth"></p>
+  <div class="year">
+    <div class="year-head"><span class="label">This year</span><span class="val" id="yearVal"></span></div>
+    <div class="year-grid" id="yearGrid" aria-hidden="true"></div>
+    <div class="year-scale"><span id="yearFrom"></span><span id="yearTo"></span></div>
+  </div>
+  <p class="sub" id="calClearNote"></p>
 
   <div class="sheet-actions">
     <button type="button" class="link" id="clearLog">Clear history</button>
@@ -385,7 +441,7 @@
 <section class="sheet" id="boardSheet" role="dialog" aria-label="Everyone's practice" aria-modal="true">
   <div class="sheet-handle"></div>
   <h2>Together</h2>
-  <p class="lead">How everyone is sitting.</p>
+  <p class="lead" id="boardLead">How everyone is sitting.</p>
   <div class="seg" id="boardSeg">
     <button type="button" data-val="month">This month</button>
     <button type="button" data-val="all">All time</button>
@@ -512,7 +568,7 @@
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06o';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06q';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -531,12 +587,12 @@
 
   /* Each person's record is kept under their own keys, so two people sharing an iPad
      never see one another's history. */
-  var KEY, LOGKEY, SESSKEY, STAMPKEY, CURSORKEY, BOARDKEY;
+  var KEY, LOGKEY, SESSKEY, STAMPKEY, CURSORKEY, BOARDKEY, FORGETKEY;
   function scopeKeys(uid){
     var p = uid ? 'still.u.' + uid + '.' : 'still.';
     KEY = p + 'settings.v1'; LOGKEY = p + 'log.v1';
     SESSKEY = p + 'session.v1'; STAMPKEY = p + 'settings.at';
-    CURSORKEY = p + 'pulled.at'; BOARDKEY = p + 'board.v1';
+    CURSORKEY = p + 'pulled.at'; BOARDKEY = p + 'board.v1'; FORGETKEY = p + 'forget';
   }
   scopeKeys(auth && auth.user.id);
 
@@ -576,6 +632,12 @@
   function loadLog(){ try{ var r = localStorage.getItem(LOGKEY); var a = r ? JSON.parse(r) : []; return Array.isArray(a) ? a : []; }catch(e){ return []; } }
   function saveLog(a){ try{ localStorage.setItem(LOGKEY, JSON.stringify(a.slice(-2000))); }catch(e){} }
   function pad2(n){ return (n < 10 ? '0' : '') + n; }
+  function nextDay(key){
+    var p = key.split('-');
+    var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
   function dayKey(ms){ var d = new Date(ms); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
   function recordSit(seconds, planned, complete, when){
     if(seconds < 60) return; // a sit under a minute is a false start, not a sit
@@ -627,8 +689,16 @@
     var streak = 0, d = new Date();
     if(!days[dayKey(d.getTime())]) d.setDate(d.getDate() - 1);       // not sat yet today: yesterday still keeps the streak
     while(days[dayKey(d.getTime())]){ streak++; d.setDate(d.getDate() - 1); }
+    // the longest run there has ever been, walked once over the days that count
+    var keys = Object.keys(days).sort();
+    var best = 0, run = 0, prev = null;
+    keys.forEach(function(k){
+      run = (prev && k === nextDay(prev)) ? run + 1 : 1;
+      if(run > best) best = run;
+      prev = k;
+    });
     var total = log.reduce(function(a, e){ return a + e.s; }, 0);
-    return { sits: log.length, streak: streak, total: total };
+    return { sits: log.length, streak: streak, best: Math.max(best, streak), total: total, days: days };
   }
   function fmtTotal(sec){
     if(sec < 3600) return Math.round(sec / 60) + ' min';
@@ -807,9 +877,13 @@
     });
 
     var body = { since: cursor(), sits: pending };
+    var forgetting = false;
+    try{ forgetting = !!localStorage.getItem(FORGETKEY); }catch(e){}
+    if(forgetting) body.forget = 1;
     if(settingsStamp() > 0){ body.settings = settings; body.settingsAt = settingsStamp(); }
 
     return apiCall('sync', { body: body }).then(function(data){
+      if(forgetting && data.forgot){ try{ localStorage.removeItem(FORGETKEY); }catch(e){} }
       mergeServer(data, pending);
       syncing = false; syncErr = ''; syncLast = Date.now();
       renderSync(); renderLog();
@@ -841,6 +915,9 @@
     var map = byDay(), stats = logStats();
     $('streakNum').textContent = stats.streak;
     $('streakLab').textContent = stats.streak === 1 ? 'day streak' : 'days streak';
+    $('bestNum').textContent = stats.best;
+    $('bestLab').textContent = 'best';
+    renderYear(stats.days);
     $('calTitle').textContent = MONS[calMonth.getMonth()] + ' ' + calMonth.getFullYear();
 
     var dow = $('calDow');
@@ -888,7 +965,43 @@
     Object.keys(map).forEach(function(kk){
       if(kk.indexOf(y + '-' + pad2(m + 1)) === 0){ mDone += map[kk].done; mSits += map[kk].sits; }
     });
+    var waiting = false;
+    try{ waiting = !!localStorage.getItem(FORGETKEY); }catch(e){}
+    $('calClearNote').textContent = waiting
+      ? 'Your record was cleared here. Removing it from the server as soon as there is a connection.'
+      : '';
     $('calMonth').textContent = mSits ? mSits + (mSits === 1 ? ' sit' : ' sits') + ' this month, ' + fmtTotal(mDone) : 'No sits this month yet.';
+  }
+
+
+  /* ---------- the year, one square a day ----------
+     Fifty-three columns of seven, ending today. Only days that count are filled, and the
+     shade follows how much of the plan was sat, the same as the month grid above it. */
+  function renderYear(days){
+    var grid = $('yearGrid'); if(!grid) return;
+    grid.innerHTML = '';
+    var map = byDay();
+    var end = new Date(); end.setHours(0, 0, 0, 0);
+    var start = new Date(end.getTime()); start.setDate(start.getDate() - 363);
+    start.setDate(start.getDate() - start.getDay());          // begin on a Sunday
+    var sat = 0, cursor = new Date(start.getTime());
+    while(cursor <= end){
+      var k = dayKey(cursor.getTime());
+      var cell = document.createElement('div');
+      cell.className = 'y-cell';
+      if(days && days[k]){
+        var rec = map[k];
+        var frac = rec ? Math.max(0.35, Math.min(1, rec.done / Math.max(rec.planned, 1))) : 1;
+        cell.className += ' on';
+        cell.style.opacity = frac.toFixed(2);
+        sat++;
+      }
+      grid.appendChild(cell);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    $('yearVal').textContent = sat + (sat === 1 ? ' day' : ' days');
+    $('yearFrom').textContent = MONS[start.getMonth()].slice(0, 3) + ' ' + start.getFullYear();
+    $('yearTo').textContent = 'today';
   }
 
   function saveSettings(){ try{ localStorage.setItem(KEY, JSON.stringify(settings)); }catch(e){} setStamp(Date.now()); }
@@ -1280,7 +1393,7 @@
   }
   function updateHint(){
     var h = $('hint'), st = session.status; h.classList.remove('warn');
-    if(st === 'idle'){ h.textContent = 'Bells and voice both play with the screen off. Start it, then pocket the phone if you like.'; }
+    if(st === 'idle'){ h.textContent = ''; }
     else if(st === 'done'){ h.textContent = ''; }
     else { h.textContent = 'Tap the screen any time to pause or end.'; }
   }
@@ -1546,8 +1659,18 @@
   var clearArmed = 0;
   $('clearLog').addEventListener('click', function(){
     var now = Date.now();
-    if(now - clearArmed < 3000){ saveLog([]); clearArmed = 0; this.textContent = 'Clear history'; calSel = null; renderCalendar(); renderLog(); return; }
-    clearArmed = now; this.textContent = 'Tap again to clear'; var self = this;
+    if(now - clearArmed < 3000){
+      saveLog([]);
+      // and everywhere else: the server keeps the shared table, so it has to hear about this
+      try{ localStorage.setItem(FORGETKEY, String(Date.now())); }catch(e){}
+      setCursor(0);
+      boardData = null;
+      try{ localStorage.removeItem(BOARDKEY); }catch(e){}
+      clearArmed = 0; this.textContent = 'Clear history';
+      calSel = null; renderCalendar(); renderLog(); syncNow(true);
+      return;
+    }
+    clearArmed = now; this.textContent = 'Tap again to clear everywhere'; var self = this;
     setTimeout(function(){ if(Date.now() - clearArmed >= 3000){ self.textContent = 'Clear history'; } }, 3100);
   });
   $('resetBtn').addEventListener('click', function(){
@@ -1579,13 +1702,19 @@
   function renderBoard(){
     var list = $('boardList');
     list.innerHTML = '';
-    if(!boardData || !boardData.rows.length) return;
+    if(!boardData || !boardData.rows.length){ $('boardLead').textContent = 'How everyone is sitting.'; return; }
 
     var key = boardPeriod === 'all' ? 'all' : 'month';
     var rows = boardData.rows.slice().sort(function(a, b){
       return (b[key].seconds - a[key].seconds) || a.name.localeCompare(b.name);
     });
     var most = Math.max(1, rows[0][key].seconds);
+
+    // what the three of them have done between them
+    var shared = rows.reduce(function(n, x){ return n + x[key].seconds; }, 0);
+    $('boardLead').textContent = shared
+      ? 'Together, ' + fmtTotal(shared) + (key === 'all' ? ' altogether.' : ' this month.')
+      : (key === 'all' ? 'Nothing sat yet.' : 'Nothing sat this month yet.');
 
     rows.forEach(function(r){
       var d = r[key] || { seconds:0, sits:0, days:0 };
@@ -1594,7 +1723,14 @@
 
       var top = document.createElement('div'); top.className = 'board-top';
       var name = document.createElement('span'); name.className = 'board-name';
-      name.textContent = r.name;
+      if(r.today){                                   // sat already today
+        var dot = document.createElement('span');
+        dot.className = 'board-dot'; dot.title = 'sat today';
+        name.appendChild(dot);
+      }
+      var who = document.createElement('span');
+      who.textContent = r.name;
+      name.appendChild(who);
       if(r.you){
         var tag = document.createElement('span'); tag.className = 'board-you';
         tag.textContent = 'you'; name.appendChild(tag);
@@ -1607,7 +1743,7 @@
       var bits = [d.sits + (d.sits === 1 ? ' sit' : ' sits'),
                   d.days + (d.days === 1 ? ' day' : ' days')];
       // the streak is a running count, so it belongs to now rather than to the period
-      if(r.streak) bits.push(r.streak + (r.streak === 1 ? ' day running' : ' days running'));
+      if(r.streak) bits.push(r.streak + ' current streak');
       sub.textContent = bits.join(' \u00b7 ');
 
       var bar = document.createElement('div'); bar.className = 'board-bar';

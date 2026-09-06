@@ -299,6 +299,12 @@ async function sync(request, env, me, body){
   const since = Math.max(0, Number(body.since ?? url.searchParams.get('since') ?? 0) || 0);
   const now = Date.now();
 
+  // Clearing your history has to reach here, or the device and the server drift apart
+  // for good: the record would be gone from the phone and still counted in the table.
+  if (body.forget) {
+    await env.DB.prepare('DELETE FROM sits WHERE user_id = ?').bind(me.id).run();
+  }
+
   const incoming = Array.isArray(body.sits) ? body.sits : [];
   if (incoming.length > MAX_SITS_SYNC)
     return fail('Too many sits in one request.', 413, request, env);
@@ -328,7 +334,8 @@ async function sync(request, env, me, body){
     user: publicUser(me),
     sits: await sitsSince(env, me.id, since),
     settings: stored.settings, settingsAt: stored.settingsAt,
-    now
+    now,
+    forgot: !!body.forget
   }, 200, request, env);
 }
 
@@ -373,7 +380,8 @@ async function leaderboard(request, env, me, body){
     month: { seconds: r.m_seconds, sits: r.m_sits, days: r.m_days },
     all:   { seconds: r.a_seconds, sits: r.a_sits, days: r.a_days },
     // each person's run is counted against their own local today
-    streak: streakFrom(byUser.get(r.id) || new Set(), todayIn(r.tz, clientToday))
+    streak: streakFrom(byUser.get(r.id) || new Set(), todayIn(r.tz, clientToday)),
+    today: (byUser.get(r.id) || new Set()).has(todayIn(r.tz, clientToday))
   }));
   rows.sort((a, b) => b.month.seconds - a.month.seconds || a.name.localeCompare(b.name));
   return json({ month, rows }, 200, request, env);

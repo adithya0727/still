@@ -12,6 +12,7 @@
    on the phone, so re-sending one is a no-op rather than a duplicate.
 */
 
+const VERSION       = '2026-09-06r';   // shown at /, so a stale deploy is obvious at a glance
 const SESSION_DAYS  = 400;                  // signed in until you sign out
 const SLIDE_MS      = 24 * 60 * 60 * 1000;  // refresh the expiry at most once a day
 /* The browser does the slow part. Cloudflare's free plan allows 10ms of CPU per request,
@@ -456,7 +457,7 @@ export default {
         path = ACTIONS[body.action];
       }
       if (path === '/' || path === '/health')
-        return json({ ok: true, service: 'still' }, 200, request, env);
+        return json({ ok: true, service: 'still', version: VERSION }, 200, request, env);
 
       if (path === '/auth/claim' && method === 'POST') return claim(request, env, body);
       if (path === '/auth/login' && method === 'POST') return login(request, env, body);

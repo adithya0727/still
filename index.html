@@ -105,23 +105,15 @@
 
   .dial{position:relative;width:min(80vw,310px);aspect-ratio:1/1;flex:0 0 auto}
   .ring{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
-  .ring .track{fill:none;stroke:var(--track);stroke-width:2;transition:stroke .9s ease}
-  .ring .progress{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;transition:stroke-dashoffset .3s linear, stroke .9s ease}
+  /* the dial is a ring of short marks that colour one by one as the sit passes */
+  .ring .tick{stroke:var(--track);stroke-width:3;stroke-linecap:round;transition:stroke .8s ease, opacity .8s ease}
+  .ring .tick.on{stroke:var(--accent)}
+  /* the one just reached keeps its full colour while the rest dim for the sit, so a single
+     point of light travels slowly round a quiet ring */
+  .ring .tick.lead{stroke:var(--breath);animation:tickpulse 5s ease-in-out infinite}
+  @keyframes tickpulse{0%,100%{opacity:.45}50%{opacity:1}}
   .ring .mark{stroke:var(--muted);stroke-width:1.5;stroke-linecap:round;transition:stroke .9s ease}
   .ring .dot{fill:var(--bg);stroke:var(--accent);stroke-width:1.5;transition:stroke .9s ease, fill .9s ease}
-  .breath{
-    position:absolute;top:50%;left:50%;width:58%;aspect-ratio:1;margin:0;
-    transform:translate(-50%,-50%) scale(.7);border-radius:50%;
-    background:radial-gradient(circle at 50% 50%, var(--breath) 0%, transparent 68%);
-    opacity:0;pointer-events:none;transition:opacity 1.6s ease;
-  }
-  body.sitting .breath{opacity:.55;animation:breathe 12s ease-in-out infinite}
-  @keyframes breathe{
-    0%   {transform:translate(-50%,-50%) scale(.70)}
-    40%  {transform:translate(-50%,-50%) scale(1.00)}
-    52%  {transform:translate(-50%,-50%) scale(1.00)}
-    100% {transform:translate(-50%,-50%) scale(.70)}
-  }
   .readout{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .9s ease}
   .time{font-size:clamp(58px,19vw,80px);font-weight:300;letter-spacing:.02em;line-height:1;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
   .state{margin-top:12px;font-size:15px;color:var(--muted);min-height:1.3em;text-align:center;padding:0 26px;line-height:1.3;transition:color .9s ease}
@@ -319,7 +311,7 @@
   @media (max-height:640px){ .dial{width:min(70vw,240px)} .plan{margin-top:14px} }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:.01ms!important}
-    .breath{animation:none!important}
+    .ring .tick.lead{animation:none!important}
   }
 </style>
 </head>
@@ -344,11 +336,9 @@
 
   <section class="dial" aria-live="polite">
     <svg class="ring" viewBox="0 0 320 320" aria-hidden="true">
-      <circle class="track" cx="160" cy="160" r="140"/>
-      <circle class="progress" id="progress" cx="160" cy="160" r="140" stroke-dasharray="879.646" stroke-dashoffset="879.646"/>
+      <g id="ticks"></g>
       <g id="marks"></g>
     </svg>
-    <div class="breath" id="breath" aria-hidden="true"></div>
     <div class="readout">
       <div class="time" id="time">30:00</div>
       <div class="state" id="state">Ready when you are</div>
@@ -562,13 +552,12 @@
 
   var $ = function(id){ return document.getElementById(id); };
   var body = document.body;
-  var CIRC = 2 * Math.PI * 140;
   /* ---------- who is signed in ----------
      The account layer sits beside the app, never in front of it. Sitting must never
      depend on a network, a server, or a live session, so the phone keeps its own copy
      of everything and the server is only where it is kept safe and shared. */
   var API = 'https://fancy-frost-7bcc.adithyab0727.workers.dev';
-  var BUILD = '2026-09-06q';   // shown in the sign-in diagnostics, so a stale copy is obvious
+  var BUILD = '2026-09-06r';   // shown in the sign-in diagnostics, so a stale copy is obvious
   var AUTHKEY = 'still.auth.v1';
 
   var auth = loadAuth();
@@ -822,6 +811,8 @@
     var waiting = pendingCount();
     if(waiting) return { short:'waiting',
       long: waiting + (waiting === 1 ? ' sit has' : ' sits have') + ' not reached the server yet. It will keep trying.' };
+    if(syncErr === 'stale') return { short:'out of date',
+      long:'The server did not clear your record. It is running an older version than this app.' };
     if(syncErr) return { short:'offline', long:'No connection. Your sits are safe here and will be saved when there is one.' };
     if(!syncLast) return { short:'ready', long:'Signed in. Every finished sit is saved.' };
     return { short:'saved', long:'Saved ' + ago(syncLast) + '.' };
@@ -838,11 +829,13 @@
     log.forEach(function(e){ if(!e.id){ e.id = newId(); changed = true; } });
     return changed;
   }
-  function mergeServer(data, pushed){
+  function mergeServer(data, pushed, ignoreTheirs){
     var log = loadLog(), byId = {};
     log.forEach(function(e){ if(e.id) byId[e.id] = e; });
     pushed.forEach(function(p){ if(byId[p.id]) byId[p.id].sent = true; });   // safely stored now
-    (data.sits || []).forEach(function(s){                                   // and anything this device lacks
+    // If we asked for the record to be cleared and the server did not confirm it, taking
+    // its copy back would silently undo the clear in front of the person who asked for it.
+    (ignoreTheirs ? [] : (data.sits || [])).forEach(function(s){             // anything this device lacks
       if(byId[s.id]){ byId[s.id].sent = true; return; }
       var e = { id:s.id, at:s.at, s:s.seconds, p:s.planned, c:!!s.complete, sent:true };
       log.push(e); byId[s.id] = e;
@@ -883,9 +876,10 @@
     if(settingsStamp() > 0){ body.settings = settings; body.settingsAt = settingsStamp(); }
 
     return apiCall('sync', { body: body }).then(function(data){
-      if(forgetting && data.forgot){ try{ localStorage.removeItem(FORGETKEY); }catch(e){} }
-      mergeServer(data, pending);
-      syncing = false; syncErr = ''; syncLast = Date.now();
+      var cleared = !forgetting || !!data.forgot;
+      if(forgetting && cleared){ try{ localStorage.removeItem(FORGETKEY); }catch(e){} }
+      mergeServer(data, pending, !cleared);
+      syncing = false; syncErr = cleared ? '' : 'stale'; syncLast = Date.now();
       renderSync(); renderLog();
       if($('calSheet').classList.contains('open')) renderCalendar();
     }).catch(function(e){
@@ -968,7 +962,9 @@
     var waiting = false;
     try{ waiting = !!localStorage.getItem(FORGETKEY); }catch(e){}
     $('calClearNote').textContent = waiting
-      ? 'Your record was cleared here. Removing it from the server as soon as there is a connection.'
+      ? (syncErr === 'stale'
+          ? 'Cleared here, but the server would not. It is running an older version than this app.'
+          : 'Cleared here. Removing it from the server as soon as there is a connection.')
       : '';
     $('calMonth').textContent = mSits ? mSits + (mSits === 1 ? ' sit' : ' sits') + ' this month, ' + fmtTotal(mDone) : 'No sits this month yet.';
   }
@@ -1276,12 +1272,12 @@
       var a = (c.t / D) * Math.PI * 2;
       if(c.type === 'bell'){
         var l = document.createElementNS(NS, 'line');
-        l.setAttribute('x1', 160 + 132 * Math.cos(a)); l.setAttribute('y1', 160 + 132 * Math.sin(a));
-        l.setAttribute('x2', 160 + 148 * Math.cos(a)); l.setAttribute('y2', 160 + 148 * Math.sin(a));
+        l.setAttribute('x1', 160 + 149 * Math.cos(a)); l.setAttribute('y1', 160 + 149 * Math.sin(a));
+        l.setAttribute('x2', 160 + 157 * Math.cos(a)); l.setAttribute('y2', 160 + 157 * Math.sin(a));
         l.setAttribute('class', 'mark'); g.appendChild(l);
       } else {
         var d = document.createElementNS(NS, 'circle');
-        d.setAttribute('cx', 160 + 140 * Math.cos(a)); d.setAttribute('cy', 160 + 140 * Math.sin(a)); d.setAttribute('r', 3.6);
+        d.setAttribute('cx', 160 + 153 * Math.cos(a)); d.setAttribute('cy', 160 + 153 * Math.sin(a)); d.setAttribute('r', 2.8);
         d.setAttribute('class', 'dot'); g.appendChild(d);
       }
     });
@@ -1292,7 +1288,27 @@
     var ref = session.status === 'paused' ? session.pausedAt : Date.now();
     return (ref - session.startedAt - session.pausedTotal) / 1000;
   }
-  function setProgress(p){ $('progress').setAttribute('stroke-dashoffset', CIRC * (1 - Math.min(1, Math.max(0, p)))); }
+  var TICKS = 72;                 // one every five degrees: about half a minute each on a 30 minute sit
+  function buildTicks(){
+    var g = $('ticks'), NS = 'http://www.w3.org/2000/svg';
+    g.innerHTML = '';
+    for(var i = 0; i < TICKS; i++){
+      var a = (i / TICKS) * Math.PI * 2;
+      var l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', 160 + 126 * Math.cos(a)); l.setAttribute('y1', 160 + 126 * Math.sin(a));
+      l.setAttribute('x2', 160 + 142 * Math.cos(a)); l.setAttribute('y2', 160 + 142 * Math.sin(a));
+      l.setAttribute('class', 'tick');
+      g.appendChild(l);
+    }
+  }
+  function setProgress(p){
+    p = Math.min(1, Math.max(0, p));
+    var lit = Math.round(p * TICKS), ts = $('ticks').children;
+    for(var i = 0; i < ts.length; i++){
+      var on = i < lit;
+      ts[i].setAttribute('class', 'tick' + (on ? ' on' : '') + (on && i === lit - 1 ? ' lead' : ''));
+    }
+  }
   function setState(t){ $('state').textContent = t; }
   function render(el){
     var D = settings.duration * 60, rem = Math.max(0, D - el);
@@ -2116,7 +2132,7 @@
   }
 
   /* ---------- init ---------- */
-  $('progress').setAttribute('stroke-dasharray', CIRC);
+  buildTicks();
   applyTheme();
   try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function(){}); }catch(e){}
   if(auth){ hideGate(); bootForUser(false); }

@@ -1499,9 +1499,13 @@
       })
       .catch(function(err){
         $('gateGo').disabled = false;
-        // only the server's own words are worth showing; a failed fetch says "Load failed"
-        var msg = (err && err.status) ? err.message
-                : 'Could not reach the server. Check your connection and try again.';
+        // Only the server's own words are worth showing; a failed fetch just says "Load failed".
+        // A request the browser refuses to send looks identical to one that went nowhere, and
+        // the commonest cause of that is running a local copy the server does not know about.
+        var msg;
+        if(err && err.status) msg = err.message;
+        else if(navigator.onLine === false) msg = 'You are offline. Try again once you have a connection.';
+        else msg = 'Could not reach the server. Check you are on the published address, not a local copy of the page.';
         if(err && err.status === 409 && !claiming) setGateMode('claim');   // clears the message
         $('gateMsg').textContent = msg;
       })
